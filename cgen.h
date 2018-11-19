@@ -14,6 +14,8 @@ typedef CgenClassTable *CgenClassTableP;
 class CgenNode;
 typedef CgenNode *CgenNodeP;
 
+// Q. What is a class table?
+// Ans. It is a global table which stores each class 
 class CgenClassTable : public SymbolTable<Symbol,CgenNode> {
 private:
    List<CgenNode> *nds;
@@ -49,10 +51,12 @@ public:
 };
 
 
+// this just stores class heirarchy information?
+// that's useless except for method dispatch
 class CgenNode : public class__class {
 private: 
    CgenNodeP parentnd;                        // Parent of class
-   List<CgenNode> *children;                  // Children of class
+   List<CgenNode> *children;                  // Children of class. Question: why do we need a list of children?
    Basicness basic_status;                    // `Basic' if class is basic
                                               // `NotBasic' otherwise
 
@@ -68,6 +72,7 @@ public:
    int basic() { return (basic_status == Basic); }
 };
 
+// do I need to define corresponding classes for other constants?
 class BoolConst 
 {
  private: 

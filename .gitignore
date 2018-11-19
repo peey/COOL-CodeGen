@@ -1,3 +1,4 @@
+*.sw[pon]
 lexer
 parser
 semant

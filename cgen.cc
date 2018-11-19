@@ -111,7 +111,7 @@ static char *gc_collect_names[] =
   { "_NoGC_Collect", "_GenGC_Collect", "_ScnGC_Collect" };
 
 
-//  BoolConst is a class that implements code generation for operations
+//  BoolConst is a class that implements code generation for operations. Q: operations?
 //  on the two booleans, which are given global names here.
 BoolConst falsebool(FALSE);
 BoolConst truebool(TRUE);
@@ -403,6 +403,7 @@ void StringEntry::code_def(ostream& s, int stringclasstag)
 
 
  /***** Add dispatch information for class String ******/
+      s << 0; // make .s files not give syntax error. Will add dispatch information later.
 
       s << endl;                                              // dispatch table
       s << WORD;  lensym->code_ref(s);  s << endl;            // string length
@@ -445,6 +446,7 @@ void IntEntry::code_def(ostream &s, int intclasstag)
       << WORD;
 
  /***** Add dispatch information for class Int ******/
+      s << 0; // make .s files not give syntax error. Will add dispatch information later.
 
       s << endl;                                          // dispatch table
       s << WORD << str << endl;                           // integer value
@@ -483,12 +485,14 @@ void BoolConst::code_def(ostream& s, int boolclasstag)
   // Add -1 eye catcher
   s << WORD << "-1" << endl;
 
+  cout << WORD << val << endl;
   code_ref(s);  s << LABEL                                  // label
       << WORD << boolclasstag << endl                       // class tag
       << WORD << (DEFAULT_OBJFIELDS + BOOL_SLOTS) << endl   // object size
       << WORD;
 
  /***** Add dispatch information for class Bool ******/
+      s << 0; // make .s files not give syntax error. Will add dispatch information later.
 
       s << endl;                                            // dispatch table
       s << WORD << val << endl;                             // value (0 or 1)
@@ -623,7 +627,7 @@ CgenClassTable::CgenClassTable(Classes classes, ostream& s) : nds(NULL) , str(s)
    intclasstag =    1 /* Change to your Int class tag here */;
    boolclasstag =   2 /* Change to your Bool class tag here */;
 
-   enterscope();
+   enterscope(); // where is this defined????? It isn't in the .h file
    if (cgen_debug) cout << "Building CgenClassTable" << endl;
    install_basic_classes();
    install_classes(classes);
