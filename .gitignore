@@ -1,0 +1,10 @@
+*.d
+*.o
+grading/*
+lexer
+parser
+semant
+cgen
+example.cl
+example.s
+
