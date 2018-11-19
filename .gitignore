@@ -1,2 +1,8 @@
+lexer
+parser
+semant
+cgen
+example.s
+example.cl
 *.o
 *.d
