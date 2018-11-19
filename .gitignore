@@ -1,10 +1,9 @@
-*.d
-*.o
-grading/*
 lexer
 parser
 semant
 cgen
-example.cl
 example.s
-
+example.cl
+*.o
+*.d
+grading/*
