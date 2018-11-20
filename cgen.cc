@@ -876,21 +876,24 @@ void CgenNode::set_parentnd(CgenNodeP p)
 
 int CgenNode::get_method_offset(Symbol method) {
    ptrdiff_t ix = find(dispatch_order.begin(), dispatch_order.end(), method) - dispatch_order.begin();
-   if (ix > dispatch_order.size()) {
+   if (ix >= dispatch_order.size()) {
      if (parentnd != NULL) {
        return parentnd->get_method_offset(method);
      } else {
-       cout << "This should never be the case. A method lookup which isn't found anywhere" << endl;
+       //cout << "This should never be the case. A method lookup which isn't found anywhere" << endl;
        return -1;
      }
    } else {
+     //cout << "offset for " << name << ":" << method << " is " << ix << endl;
      return dispatch_offset + ix;
    }
 }
 
 Symbol CgenNode::get_method_defining_class(Symbol method) {
-   ptrdiff_t ix = find(dispatch_order.begin(), dispatch_order.end(), method) - dispatch_order.begin();
-   if (ix > dispatch_order.size()) {
+   ptrdiff_t ix = find(own_methods.begin(), own_methods.end(), method) - own_methods.begin();
+   //cout << name << ":" << method << " " << ix << endl;
+   if (ix >= own_methods.size()) {
+     //cout << "truth" << endl;
      if (parentnd != NULL) {
        return parentnd->get_method_defining_class(method);
      } else {
@@ -898,6 +901,7 @@ Symbol CgenNode::get_method_defining_class(Symbol method) {
        return Object;
      }
    } else {
+     //cout << "falsehood" << endl;
      return name;
    }
 }
@@ -960,27 +964,30 @@ void CgenClassTable::initializers_code() {
   }
 }
 
-void CgenNode::print_dispatch_table(ostream& s) {
+void CgenNode::print_dispatch_table(ostream& s, CgenNodeP original_node) {
   if (parentnd) {
-    parentnd->print_dispatch_table(s);
+    parentnd->print_dispatch_table(s, original_node);
   }
 
   for (int i = 0; i < dispatch_order.size(); i++) {
     Symbol method = dispatch_order[i];
-    s << WORD << get_method_defining_class(method) << "." << method << endl;
+    s << WORD << original_node->get_method_defining_class(method) << "." << method << endl;
   }
 }
 
 void CgenClassTable::dispatch_tables() {
   CgenNodeP objectNode = probe(Object);
+  objectNode->own_methods = {cool_abort, type_name, copy};
   objectNode->dispatch_order = {cool_abort, type_name, copy};
   objectNode->dispatch_offset = 0;
 
   CgenNodeP IONode = probe(IO);
+  IONode->own_methods = {out_string, out_int, in_string, in_int};
   IONode->dispatch_order = {out_string, out_int, in_string, in_int};
   IONode->dispatch_offset = 3;
 
   CgenNodeP stringNode = probe(Str);
+  stringNode->own_methods = {length, concat, substr};
   stringNode->dispatch_order = {length, concat, substr};
   stringNode->dispatch_offset = 3;
 
@@ -989,9 +996,9 @@ void CgenClassTable::dispatch_tables() {
   q.push(root());
 
   // INITIALIZE the dispatch info
-
+  CgenNodeP node;
   while(!q.empty()) { // proceed in BFS manner
-    CgenNodeP node = q.front();
+    node = q.front();
     q.pop();
 
     if (!(node->name == Object || node->name == IO || node->name == Str)) {
@@ -1001,14 +1008,32 @@ void CgenClassTable::dispatch_tables() {
       for (int i = 0; i < features->len(); i++) {
         Feature f = features->nth(i);
         if(!f->isattr()) {
-          node->dispatch_order.push_back(f->get_name());
+          if (node->parentnd && node->parentnd->get_method_offset(f->get_name()) == -1) {
+            node->dispatch_order.push_back(f->get_name());
+          }
+
+          node->own_methods.push_back(f->get_name());
         }
       }
     }
 
     // the node is ready here, we can process it 
     emit_disptable_ref(node->name, str); str << LABEL;
-    node->print_dispatch_table(str);
+
+    /*
+    for (std::vector<Symbol>::const_iterator i = node->own_methods.begin(); i != node->own_methods.end(); ++i) {
+      cout << *i << ":"; 
+      cout << node->get_method_defining_class(*i) << " ";
+    }
+
+    cout << endl;
+
+    for (std::vector<Symbol>::const_iterator i = node->dispatch_order.begin(); i != node->dispatch_order.end(); ++i)
+      cout << *i << " "; 
+    cout << endl;
+    */
+
+    node->print_dispatch_table(str, node);
 
     // enqueue neighbors 
     for(List<CgenNode> *l = node->children; l; l = l->tl()) {

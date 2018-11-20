@@ -73,6 +73,7 @@ public:
                                               // `NotBasic' otherwise
    // added 
    int assigned_tag;
+   std::vector<Symbol> own_methods; 
    std::vector<Symbol> dispatch_order; // dispatch order of functions of self
    int dispatch_offset;
 
@@ -89,7 +90,7 @@ public:
    void assign_tag(int t) {assigned_tag = t;}
    int get_method_offset(Symbol method);
    Symbol get_method_defining_class(Symbol method); 
-   void print_dispatch_table(ostream& s);
+   void print_dispatch_table(ostream& s, CgenNodeP original_node);
 };
 
 
