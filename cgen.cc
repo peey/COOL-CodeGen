@@ -551,7 +551,7 @@ void CgenClassTable::code_global_data()
   // INT START
   // Add -1 eye catcher
   str << WORD << "-1" << endl; //TODO will we keep the GC tag in the protobj?
-  
+
   emit_protobj_ref(integer, str); str << LABEL           // label
       << WORD << intclasstag << endl                      // class tag
       << WORD << (DEFAULT_OBJFIELDS + INT_SLOTS) << endl  // object size
@@ -561,7 +561,7 @@ void CgenClassTable::code_global_data()
 
       str << endl;                                          // dispatch table
       str << WORD << 0 << endl;                           // integer value
-  // INT END 
+  // INT END
 }
 
 
@@ -840,13 +840,19 @@ void CgenNode::set_parentnd(CgenNodeP p)
 }
 
 
-void CgenClassTable::emit_class_nameTab() {
-  // TODO use the order of nds for class tags
-  str << CLASSNAMETAB << LABEL; 
-  for(List<CgenNode> *l = nds; l; l = l->tl()) {
-	CgenNodeP node = l->hd();
-	str << WORD; stringtable.lookup_string(node->name->get_string())->code_ref(str); str << endl;
-  }
+void CgenClassTable::emit_class_nameTab()
+{
+    // TODO use the order of nds for class tags
+    str << CLASSNAMETAB << LABEL;
+    for(List<CgenNode> *l = nds; l; l = l->tl()) {
+        CgenNodeP node = l->hd();
+        str << WORD; stringtable.lookup_string(node->name->get_string())->code_ref(str); str << endl;
+    }
+}
+
+void CgenClassTable::emit_class_protobj()
+{
+    
 }
 
 void CgenClassTable::code()
