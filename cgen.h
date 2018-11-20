@@ -1,4 +1,3 @@
-#include <map>
 #include <assert.h>
 #include <stdio.h>
 #include "emit.h"
@@ -16,7 +15,7 @@ class CgenNode;
 typedef CgenNode *CgenNodeP;
 
 // Q. What is a class table?
-// Ans. It is a global table which stores each class 
+// Ans. It is a global table which stores each class
 class CgenClassTable : public SymbolTable<Symbol,CgenNode> {
 private:
    List<CgenNode> *nds;
@@ -24,7 +23,6 @@ private:
    int stringclasstag;
    int intclasstag;
    int boolclasstag;
-   int availableclasstag;
 
 
 // The following methods emit code for
@@ -40,6 +38,7 @@ private:
    void emit_class_nameTab();
    CgenNodeP get_node_from_tag(int tag);
    void initializers_code();
+   void emit_class_protobj();
 
 // The following creates an inheritance graph from
 // a list of classes.  The graph is implemented as
@@ -61,13 +60,11 @@ public:
 // this just stores class heirarchy information?
 // that's useless except for method dispatch
 class CgenNode : public class__class {
-private: 
+private:
    CgenNodeP parentnd;                        // Parent of class
    List<CgenNode> *children;                  // Children of class. Question: why do we need a list of children?
    Basicness basic_status;                    // `Basic' if class is basic
                                               // `NotBasic' otherwise
-public:
-   int assigned_tag;
 
 public:
    CgenNode(Class_ c,
@@ -79,13 +76,12 @@ public:
    void set_parentnd(CgenNodeP p);
    CgenNodeP get_parentnd() { return parentnd; }
    int basic() { return (basic_status == Basic); }
-   void assign_tag(int t) {assigned_tag = t;}
 };
 
 // do I need to define corresponding classes for other constants?
-class BoolConst 
+class BoolConst
 {
- private: 
+ private:
   int val;
  public:
   BoolConst(int);
