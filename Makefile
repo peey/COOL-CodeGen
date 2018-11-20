@@ -24,7 +24,7 @@ CPPINCLUDE= -I. -I${CLASSDIR}/include/PA${ASSN} -I${CLASSDIR}/src/PA${ASSN}
 FFLAGS = -d8 -ocool-lex.cc
 BFLAGS = -d -v -y -b cool --debug -p cool_yy
 
-CC=g++
+CC=g++ -std=c++11
 CFLAGS=-g -Wall -Wno-unused -Wno-write-strings -Wno-deprecated ${CPPINCLUDE} -DDEBUG
 FLEX=flex ${FFLAGS}
 BISON= bison ${BFLAGS}

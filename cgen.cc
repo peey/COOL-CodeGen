@@ -24,6 +24,10 @@
 
 #include "cgen.h"
 #include "cgen_gc.h"
+#include <vector>
+#include <algorithm>
+#include <cstddef>
+#include <queue>
 
 extern void emit_string_constant(ostream& str, char *s);
 extern int cgen_debug;
@@ -425,7 +429,7 @@ void StringEntry::code_def(ostream& s, int stringclasstag)
 
 
  /***** Add dispatch information for class String ******/
-      s << "string_dispatch";
+  	  emit_disptable_ref(Str, s);
 
       s << endl;                                              // dispatch table
       s << WORD;  lensym->code_ref(s);  s << endl;            // string length
@@ -468,7 +472,7 @@ void IntEntry::code_def(ostream &s, int intclasstag)
       << WORD;
 
  /***** Add dispatch information for class Int ******/
-      s << "int_dispatch";
+  	  emit_disptable_ref(Int, s);
 
       s << endl;                                          // dispatch table
       s << WORD << str << endl;                           // integer value
@@ -514,7 +518,7 @@ void BoolConst::code_def(ostream& s, int boolclasstag)
       << WORD;
 
  /***** Add dispatch information for class Bool ******/
-      s << "bool_dispatch";
+  	  emit_disptable_ref(Bool, s);
 
       s << endl;                                            // dispatch table
       s << WORD << val << endl;                             // value (0 or 1)
@@ -870,13 +874,40 @@ void CgenNode::set_parentnd(CgenNodeP p)
 }
 
 
+int CgenNode::get_method_offset(Symbol method) {
+   ptrdiff_t ix = find(dispatch_order.begin(), dispatch_order.end(), method) - dispatch_order.begin();
+   if (ix > dispatch_order.size()) {
+     if (parentnd != NULL) {
+       return parentnd->get_method_offset(method);
+     } else {
+       cout << "This should never be the case. A method lookup which isn't found anywhere" << endl;
+       return -1;
+     }
+   } else {
+     return dispatch_offset + ix;
+   }
+}
+
+Symbol CgenNode::get_method_defining_class(Symbol method) {
+   ptrdiff_t ix = find(dispatch_order.begin(), dispatch_order.end(), method) - dispatch_order.begin();
+   if (ix > dispatch_order.size()) {
+     if (parentnd != NULL) {
+       return parentnd->get_method_defining_class(method);
+     } else {
+       cout << "This should never be the case. A method lookup which isn't found anywhere" << endl;
+       return Object;
+     }
+   } else {
+     return name;
+   }
+}
 
 CgenNodeP CgenClassTable::get_node_from_tag(int tag) {
   for(List<CgenNode> *l = nds; l; l = l->tl()) {
-	CgenNodeP node = l->hd();
-	if (node->assigned_tag == tag) {
-	  return node;
-	}
+       CgenNodeP node = l->hd();
+       if (node->assigned_tag == tag) {
+         return node;
+       }
   }
   cout << "Error: node corresponding to the tag " << tag << " does not exist" << endl;
 }
@@ -888,10 +919,6 @@ void CgenClassTable::emit_class_nameTab() {
 	CgenNodeP node = get_node_from_tag(i);
 	str << WORD; stringtable.lookup_string(node->name->get_string())->code_ref(str); str << endl;
   }
-
-void CgenClassTable::emit_class_protobj()
-{
-    
 }
 
 void CgenClassTable::initializers_code() {
@@ -933,6 +960,63 @@ void CgenClassTable::initializers_code() {
   }
 }
 
+void CgenNode::print_dispatch_table(ostream& s) {
+  if (parentnd) {
+    parentnd->print_dispatch_table(s);
+  }
+
+  for (int i = 0; i < dispatch_order.size(); i++) {
+    Symbol method = dispatch_order[i];
+    s << WORD << get_method_defining_class(method) << "." << method << endl;
+  }
+}
+
+void CgenClassTable::dispatch_tables() {
+  CgenNodeP objectNode = probe(Object);
+  objectNode->dispatch_order = {cool_abort, type_name, copy};
+  objectNode->dispatch_offset = 0;
+
+  CgenNodeP IONode = probe(IO);
+  IONode->dispatch_order = {out_string, out_int, in_string, in_int};
+  IONode->dispatch_offset = 3;
+
+  CgenNodeP stringNode = probe(Str);
+  stringNode->dispatch_order = {length, concat, substr};
+  stringNode->dispatch_offset = 3;
+
+
+  std::queue<CgenNodeP> q;
+  q.push(root());
+
+  // INITIALIZE the dispatch info
+
+  while(!q.empty()) { // proceed in BFS manner
+    CgenNodeP node = q.front();
+    q.pop();
+
+    if (!(node->name == Object || node->name == IO || node->name == Str)) {
+      node->dispatch_offset = node->parentnd->dispatch_order.size() + node->parentnd->dispatch_offset;
+
+      Features features = node->features;
+      for (int i = 0; i < features->len(); i++) {
+        Feature f = features->nth(i);
+        if(!f->isattr()) {
+          node->dispatch_order.push_back(f->get_name());
+        }
+      }
+    }
+
+    // the node is ready here, we can process it 
+    emit_disptable_ref(node->name, str); str << LABEL;
+    node->print_dispatch_table(str);
+
+    // enqueue neighbors 
+    for(List<CgenNode> *l = node->children; l; l = l->tl()) {
+      q.push(l->hd());
+    }
+  }
+}
+
 void CgenClassTable::code()
 {
   if (cgen_debug) cout << "coding global data" << endl;
@@ -950,6 +1034,8 @@ void CgenClassTable::code()
   if (cgen_debug) cout << "emiting class_nameTab" << endl;
   emit_class_nameTab();
 //                   - dispatch tables
+  if (cgen_debug) cout << "dispatch tables" << endl;
+  dispatch_tables();
 //
 
   if (cgen_debug) cout << "coding global text" << endl;

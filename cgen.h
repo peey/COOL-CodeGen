@@ -1,3 +1,5 @@
+#include <vector>
+#include <algorithm>
 #include <assert.h>
 #include <stdio.h>
 #include "emit.h"
@@ -42,6 +44,7 @@ public:
    CgenNodeP get_node_from_tag(int tag);
    void initializers_code();
    void emit_class_protobj();
+   void dispatch_tables();
 
 // The following creates an inheritance graph from
 // a list of classes.  The graph is implemented as
@@ -63,13 +66,15 @@ public:
 // this just stores class heirarchy information?
 // that's useless except for method dispatch
 class CgenNode : public class__class {
-private:
+public:
    CgenNodeP parentnd;                        // Parent of class
    List<CgenNode> *children;                  // Children of class
    Basicness basic_status;                    // `Basic' if class is basic
                                               // `NotBasic' otherwise
-public:
+   // added 
    int assigned_tag;
+   std::vector<Symbol> dispatch_order; // dispatch order of functions of self
+   int dispatch_offset;
 
 public:
    CgenNode(Class_ c,
@@ -82,6 +87,9 @@ public:
    CgenNodeP get_parentnd() { return parentnd; }
    int basic() { return (basic_status == Basic); }
    void assign_tag(int t) {assigned_tag = t;}
+   int get_method_offset(Symbol method);
+   Symbol get_method_defining_class(Symbol method); 
+   void print_dispatch_table(ostream& s);
 };
 
 
