@@ -403,7 +403,7 @@ void StringEntry::code_def(ostream& s, int stringclasstag)
 
 
  /***** Add dispatch information for class String ******/
-      s << 0; // make .s files not give syntax error. Will add dispatch information later.
+      s << "string_dispatch";
 
       s << endl;                                              // dispatch table
       s << WORD;  lensym->code_ref(s);  s << endl;            // string length
@@ -446,7 +446,7 @@ void IntEntry::code_def(ostream &s, int intclasstag)
       << WORD;
 
  /***** Add dispatch information for class Int ******/
-      s << 0; // make .s files not give syntax error. Will add dispatch information later.
+      s << "int_dispatch";
 
       s << endl;                                          // dispatch table
       s << WORD << str << endl;                           // integer value
@@ -492,7 +492,7 @@ void BoolConst::code_def(ostream& s, int boolclasstag)
       << WORD;
 
  /***** Add dispatch information for class Bool ******/
-      s << 0; // make .s files not give syntax error. Will add dispatch information later.
+      s << "bool_dispatch";
 
       s << endl;                                            // dispatch table
       s << WORD << val << endl;                             // value (0 or 1)
