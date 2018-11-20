@@ -224,6 +224,7 @@ static void emit_sub(char *dest, char *src1, char *src2, ostream& s)
 static void emit_sll(char *dest, char *src1, int num, ostream& s)
 { s << SLL << dest << " " << src1 << " " << num << endl; }
 
+//TODO use this for dynamic dispatch
 static void emit_jalr(char *dest, ostream& s)
 { s << JALR << "\t" << dest << endl; }
 
@@ -356,6 +357,24 @@ static void emit_gc_check(char *source, ostream &s)
   s << JAL << "_gc_check" << endl;
 }
 
+// STACK MANAGEMENT
+void emit_stack_entry_bookkeeping(ostream& s) {
+  // based on how coolc manages stack
+  emit_addiu(SP, SP, -12, s);
+  emit_store(FP, 3, SP, s);
+  emit_store(SELF, 2, SP, s);
+  emit_store(RA, 1, SP, s);
+  emit_addiu(FP, SP, 1, s); // frame is now pointing to where we stored the FP on stack
+  //TODO use a calling convention. That would add more bookeeping I suppose
+}
+
+void emit_stack_exit_bookkeeping(ostream& s) {
+  emit_load(FP, 3, SP, s);
+  emit_load(SELF, 2, SP, s);
+  emit_load(RA, 1, SP, s);
+  emit_addiu(SP, SP, 12, s);
+  emit_return(s);
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -862,12 +881,50 @@ CgenNodeP CgenClassTable::get_node_from_tag(int tag) {
 
 
 void CgenClassTable::emit_class_nameTab() {
-  // TODO use the order of nds for class tags
   str << CLASSNAMETAB << LABEL; 
   int n = list_length(nds);
   for(int i = 0; i < n; i++) { // this loop has no use but we don't know the
 	CgenNodeP node = get_node_from_tag(i);
 	str << WORD; stringtable.lookup_string(node->name->get_string())->code_ref(str); str << endl;
+  }
+}
+
+void CgenClassTable::initializers_code() {
+  // Int_init start
+  emit_init_ref(Int, str); str << LABEL; // we get the object in $a0 or ACC. Assuming that it may have garbage values and wasn't 0'd out.
+  emit_store_int(ZERO, ACC, str); // store 0 in the int's value, do we need to?
+  emit_return(str);
+
+  // Object_init start
+  emit_init_ref(Object, str); str << LABEL; // do nothing. Why does this exist? because it may be called when we're calling the "parent initializer".
+  emit_return(str);
+
+  // Bool_init start
+  emit_init_ref(Bool, str); str << LABEL; 
+  emit_return(str);
+
+  // String_init start
+  emit_init_ref(Str, str); str << LABEL;
+  emit_return(str);
+
+  // IO_init start
+  emit_init_ref(IO, str); str << LABEL; // we get the object in $a0 or ACC. Assuming that it may have garbage values and wasn't 0'd out.
+  emit_return(str);
+
+  // for any other classes
+  for(List<CgenNode> *l = nds; l; l = l->tl()) {
+	CgenNodeP node = l->hd();
+
+	if (node->name == Object || node->name == Int || node->name == Bool || node->name == Str || node->name == IO) continue; // TODO optimize
+
+	emit_init_ref(node->name, str); str << LABEL;
+	emit_stack_entry_bookkeeping(str);
+	// init's calling convention: object being initialized will always be passed in $a0
+	emit_move(SELF, ACC, str); // destination, source. TODO why is this needed? because the initialization code may need to refer to self?
+	str << JAL; emit_init_ref(node->parent, str); str << endl;
+	// TODO initialization code goes here
+	emit_move(ACC, SELF, str); // Q: why is this needed?? ACC usually contains "return value" which I don't think has significance here. Anyways, why are we modifying it? Ans. because we want to return "SELF" from new
+	emit_stack_exit_bookkeeping(str);
   }
 }
 
@@ -895,8 +952,13 @@ void CgenClassTable::code()
 
 //                 Add your code to emit
 //                   - object initializer
+//
+  if (cgen_debug) cout << "Object initializers" << endl;
+  initializers_code();
+
 //                   - the class methods
 //                   - etc...
+
 
 }
 

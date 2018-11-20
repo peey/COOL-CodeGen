@@ -39,6 +39,7 @@ private:
 // Added functions
    void emit_class_nameTab();
    CgenNodeP get_node_from_tag(int tag);
+   void initializers_code();
 
 // The following creates an inheritance graph from
 // a list of classes.  The graph is implemented as
