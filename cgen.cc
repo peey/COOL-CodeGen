@@ -338,6 +338,7 @@ static void emit_store_int(char *source, char *dest, ostream& s)
 { emit_store(source, DEFAULT_OBJFIELDS, dest, s); }
 
 
+//Q: what does this do excactly?
 static void emit_test_collector(ostream &s)
 {
   emit_push(ACC, s);
@@ -348,6 +349,7 @@ static void emit_test_collector(ostream &s)
   emit_load(ACC,0,SP,s);
 }
 
+//TODO: call after every assignment
 static void emit_gc_check(char *source, ostream &s)
 {
   if (source != (char*)A1) emit_move(A1, source, s);
@@ -381,7 +383,7 @@ static void emit_gc_check(char *source, ostream &s)
 //
 void StringEntry::code_ref(ostream& s)
 {
-  s << STRCONST_PREFIX << index;
+  s << STRCONST_PREFIX << index; // STRCONST_PREFIX is defined in emit.h
 }
 
 //
@@ -389,14 +391,15 @@ void StringEntry::code_ref(ostream& s)
 // You should fill in the code naming the dispatch table.
 //
 
+//Q: difference between code_def and code_ref?
 void StringEntry::code_def(ostream& s, int stringclasstag)
 {
   IntEntryP lensym = inttable.add_int(len);
 
   // Add -1 eye catcher
-  s << WORD << "-1" << endl;
+  s << WORD << "-1" << endl; //TODO: what is -1 doing here? First one should be class tag no? or is this for GC?
 
-  code_ref(s);  s  << LABEL                                             // label
+  code_ref(s);  s  << LABEL                                             // label is ":\n" in emit.h
       << WORD << stringclasstag << endl                                 // tag
       << WORD << (DEFAULT_OBJFIELDS + STRING_SLOTS + (len+4)/4) << endl // size
       << WORD;
@@ -542,6 +545,23 @@ void CgenClassTable::code_global_data()
       << WORD << boolclasstag << endl;
   str << STRINGTAG << LABEL
       << WORD << stringclasstag << endl;
+
+  // prot objects definition
+
+  // INT START
+  // Add -1 eye catcher
+  str << WORD << "-1" << endl; //TODO will we keep the GC tag in the protobj?
+  
+  emit_protobj_ref(integer, str); str << LABEL           // label
+      << WORD << intclasstag << endl                      // class tag
+      << WORD << (DEFAULT_OBJFIELDS + INT_SLOTS) << endl  // object size
+      << WORD;
+
+      str << 0; // make .s files not give syntax error. Will add dispatch information later.
+
+      str << endl;                                          // dispatch table
+      str << WORD << 0 << endl;                           // integer value
+  // INT END 
 }
 
 
@@ -768,7 +788,7 @@ void CgenClassTable::install_class(CgenNodeP nd)
 {
   Symbol name = nd->get_name();
 
-  if (probe(name))
+  if (probe(name)) // Q: what is this?
     {
       return;
     }
@@ -820,6 +840,14 @@ void CgenNode::set_parentnd(CgenNodeP p)
 }
 
 
+void CgenClassTable::emit_class_nameTab() {
+  // TODO use the order of nds for class tags
+  str << CLASSNAMETAB << LABEL; 
+  for(List<CgenNode> *l = nds; l; l = l->tl()) {
+	CgenNodeP node = l->hd();
+	str << WORD; stringtable.lookup_string(node->name->get_string())->code_ref(str); str << endl;
+  }
+}
 
 void CgenClassTable::code()
 {
@@ -835,6 +863,8 @@ void CgenClassTable::code()
 //                 Add your code to emit
 //                   - prototype objects
 //                   - class_nameTab
+  if (cgen_debug) cout << "emiting class_nameTab" << endl;
+  emit_class_nameTab();
 //                   - dispatch tables
 //
 

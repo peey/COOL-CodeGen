@@ -34,6 +34,9 @@ private:
    void code_select_gc();
    void code_constants();
 
+// Added functions
+   void emit_class_nameTab();
+
 // The following creates an inheritance graph from
 // a list of classes.  The graph is implemented as
 // a tree of `CgenNode', and class names are placed
@@ -82,4 +85,3 @@ class BoolConst
   void code_def(ostream&, int boolclasstag);
   void code_ref(ostream&) const;
 };
-

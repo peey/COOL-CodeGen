@@ -8,3 +8,4 @@ example.cl
 *.o
 *.d
 grading/*
+.lvimrc
