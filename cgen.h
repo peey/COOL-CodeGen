@@ -23,6 +23,9 @@ private:
    int stringclasstag;
    int intclasstag;
    int boolclasstag;
+public:
+   // added members
+   int availableclasstag;
 
 
 // The following methods emit code for
@@ -62,9 +65,11 @@ public:
 class CgenNode : public class__class {
 private:
    CgenNodeP parentnd;                        // Parent of class
-   List<CgenNode> *children;                  // Children of class. Question: why do we need a list of children?
+   List<CgenNode> *children;                  // Children of class
    Basicness basic_status;                    // `Basic' if class is basic
                                               // `NotBasic' otherwise
+public:
+   int assigned_tag;
 
 public:
    CgenNode(Class_ c,
@@ -76,7 +81,9 @@ public:
    void set_parentnd(CgenNodeP p);
    CgenNodeP get_parentnd() { return parentnd; }
    int basic() { return (basic_status == Basic); }
+   void assign_tag(int t) {assigned_tag = t;}
 };
+
 
 // do I need to define corresponding classes for other constants?
 class BoolConst
