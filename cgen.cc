@@ -646,6 +646,7 @@ CgenClassTable::CgenClassTable(Classes classes, ostream& s) : nds(NULL) , str(s)
    stringclasstag = 0 /* Change to your String class tag here */;
    intclasstag =    1 /* Change to your Int class tag here */;
    boolclasstag =   2 /* Change to your Bool class tag here */;
+   availableclasstag = 3;
 
    enterscope(); // where is this defined????? It isn't in the .h file
    if (cgen_debug) cout << "Building CgenClassTable" << endl;
@@ -793,6 +794,16 @@ void CgenClassTable::install_class(CgenNodeP nd)
       return;
     }
 
+  if (name == Str) {
+	nd->assign_tag(stringclasstag);
+  } else if (name == Int) {
+	nd->assign_tag(intclasstag);
+  } else if (name == Bool) {
+	nd->assign_tag(boolclasstag);
+  } else {
+	nd->assign_tag(availableclasstag++);
+  }
+
   // The class name is legal, so add it to the list of classes
   // and the symbol table.
   nds = new List<CgenNode>(nd,nds);
@@ -839,12 +850,23 @@ void CgenNode::set_parentnd(CgenNodeP p)
   parentnd = p;
 }
 
+CgenNodeP CgenClassTable::get_node_from_tag(int tag) {
+  for(List<CgenNode> *l = nds; l; l = l->tl()) {
+	CgenNodeP node = l->hd();
+	if (node->assigned_tag == tag) {
+	  return node;
+	}
+  }
+  cout << "Error: node corresponding to the tag " << tag << " does not exist" << endl;
+}
+
 
 void CgenClassTable::emit_class_nameTab() {
   // TODO use the order of nds for class tags
   str << CLASSNAMETAB << LABEL; 
-  for(List<CgenNode> *l = nds; l; l = l->tl()) {
-	CgenNodeP node = l->hd();
+  int n = list_length(nds);
+  for(int i = 0; i < n; i++) { // this loop has no use but we don't know the
+	CgenNodeP node = get_node_from_tag(i);
 	str << WORD; stringtable.lookup_string(node->name->get_string())->code_ref(str); str << endl;
   }
 }
