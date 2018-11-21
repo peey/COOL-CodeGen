@@ -62,6 +62,16 @@
 #define WORD          "\t.word\t"
 
 //
+//
+// For activation record. These offsets from the frame pointer. - means up
+// The arguments are stored below the frame pointer, +1 would mean first argument, +2 second and so on
+//
+#define RETURN_ADDRESS_OFFSET   -0
+#define SELF_OBJECT_OFFSET      -1
+#define CONTROL_LINK_OFFSET     -2
+#define ARGS_OFFSET             -3 // first copied argument resides here
+
+//
 // register names
 //
 #define ZERO "$zero"		// Zero register
@@ -104,3 +114,5 @@
 #define BLEQ     "\tble\t"
 #define BLT      "\tblt\t"
 #define BGT      "\tbgt\t"
+
+

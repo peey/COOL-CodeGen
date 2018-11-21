@@ -24,6 +24,10 @@
 
 #include "cgen.h"
 #include "cgen_gc.h"
+#include <vector>
+#include <algorithm>
+#include <cstddef>
+#include <queue>
 
 extern void emit_string_constant(ostream& str, char *s);
 extern int cgen_debug;
@@ -224,6 +228,7 @@ static void emit_sub(char *dest, char *src1, char *src2, ostream& s)
 static void emit_sll(char *dest, char *src1, int num, ostream& s)
 { s << SLL << dest << " " << src1 << " " << num << endl; }
 
+//TODO use this for dynamic dispatch
 static void emit_jalr(char *dest, ostream& s)
 { s << JALR << "\t" << dest << endl; }
 
@@ -313,6 +318,19 @@ static void emit_branch(int l, ostream& s)
   s << endl;
 }
 
+void emit_shrink_stack(ostream &s) {
+  emit_addiu(SP, SP, 4, s); // pops stack?
+}
+
+void emit_shrink_stack(int n, ostream &s) { // shrink stack by n words
+  emit_addiu(SP, SP, n * 4, s);
+}
+
+void emit_pop(char* reg, ostream &s) {
+  emit_load(reg, 4, SP, s);
+  emit_shrink_stack(s);
+}
+
 //
 // Push a register on the stack. The stack grows towards smaller addresses.
 //
@@ -356,6 +374,24 @@ static void emit_gc_check(char *source, ostream &s)
   s << JAL << "_gc_check" << endl;
 }
 
+// STACK MANAGEMENT, used for initializers
+void emit_stack_entry_bookkeeping(ostream& s) {
+  // based on how coolc manages stack
+  emit_addiu(SP, SP, -12, s);
+  emit_store(FP, 3, SP, s);
+  emit_store(SELF, 2, SP, s);
+  emit_store(RA, 1, SP, s);
+  emit_addiu(FP, SP, 1, s); // frame is now pointing to where we stored the FP on stack
+  //TODO use a calling convention. That would add more bookeeping I suppose
+}
+
+void emit_stack_exit_bookkeeping(ostream& s) {
+  emit_load(FP, 3, SP, s);
+  emit_load(SELF, 2, SP, s);
+  emit_load(RA, 1, SP, s);
+  emit_addiu(SP, SP, 12, s);
+  emit_return(s);
+}
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -406,7 +442,7 @@ void StringEntry::code_def(ostream& s, int stringclasstag)
 
 
  /***** Add dispatch information for class String ******/
-      s << "string_dispatch";
+  	  emit_disptable_ref(Str, s);
 
       s << endl;                                              // dispatch table
       s << WORD;  lensym->code_ref(s);  s << endl;            // string length
@@ -449,7 +485,7 @@ void IntEntry::code_def(ostream &s, int intclasstag)
       << WORD;
 
  /***** Add dispatch information for class Int ******/
-      s << "int_dispatch";
+  	  emit_disptable_ref(Int, s);
 
       s << endl;                                          // dispatch table
       s << WORD << str << endl;                           // integer value
@@ -495,7 +531,7 @@ void BoolConst::code_def(ostream& s, int boolclasstag)
       << WORD;
 
  /***** Add dispatch information for class Bool ******/
-      s << "bool_dispatch";
+  	  emit_disptable_ref(Bool, s);
 
       s << endl;                                            // dispatch table
       s << WORD << val << endl;                             // value (0 or 1)
@@ -871,6 +907,173 @@ void CgenNode::print_vector(CgenNodeP node)
     }
 }
 
+int CgenNode::get_method_offset(Symbol method) {
+   ptrdiff_t ix = find(dispatch_order.begin(), dispatch_order.end(), method) - dispatch_order.begin();
+   if (ix >= (unsigned) dispatch_order.size()) {
+     if (parentnd != NULL) {
+       return parentnd->get_method_offset(method);
+     } else {
+       //cout << "This should never be the case. A method lookup which isn't found anywhere" << endl;
+       return -1;
+     }
+   } else {
+     //cout << "offset for " << name << ":" << method << " is " << ix << endl;
+     return dispatch_offset + ix;
+   }
+}
+
+Symbol CgenNode::get_method_defining_class(Symbol method) {
+   ptrdiff_t ix = find(own_methods.begin(), own_methods.end(), method) - own_methods.begin();
+   //cout << name << ":" << method << " " << ix << endl;
+   if (ix >= (unsigned) own_methods.size()) {
+     //cout << "truth" << endl;
+     if (parentnd != NULL) {
+       return parentnd->get_method_defining_class(method);
+     } else {
+       cout << "This should never be the case. A method lookup which isn't found anywhere" << endl;
+       return Object;
+     }
+   } else {
+     //cout << "falsehood" << endl;
+     return name;
+   }
+}
+
+CgenNodeP CgenClassTable::get_node_from_tag(int tag) {
+  for(List<CgenNode> *l = nds; l; l = l->tl()) {
+       CgenNodeP node = l->hd();
+       if (node->assigned_tag == tag) {
+         return node;
+       }
+  }
+  cout << "Error: node corresponding to the tag " << tag << " does not exist" << endl;
+}
+
+void CgenClassTable::emit_class_nameTab() {
+  str << CLASSNAMETAB << LABEL; 
+  int n = list_length(nds);
+  for(int i = 0; i < n; i++) { // this loop has no use but we don't know the
+	CgenNodeP node = get_node_from_tag(i);
+	str << WORD; stringtable.lookup_string(node->name->get_string())->code_ref(str); str << endl;
+  }
+}
+
+void CgenClassTable::initializers_code() {
+  // Int_init start
+  emit_init_ref(Int, str); str << LABEL; // we get the object in $a0 or ACC. Assuming that it may have garbage values and wasn't 0'd out.
+  emit_store_int(ZERO, ACC, str); // store 0 in the int's value, do we need to?
+  emit_return(str);
+
+  // Object_init start
+  emit_init_ref(Object, str); str << LABEL; // do nothing. Why does this exist? because it may be called when we're calling the "parent initializer".
+  emit_return(str);
+
+  // Bool_init start
+  emit_init_ref(Bool, str); str << LABEL; 
+  emit_return(str);
+
+  // String_init start
+  emit_init_ref(Str, str); str << LABEL;
+  emit_return(str);
+
+  // IO_init start
+  emit_init_ref(IO, str); str << LABEL; // we get the object in $a0 or ACC. Assuming that it may have garbage values and wasn't 0'd out.
+  emit_return(str);
+
+  // for any other classes
+  for(List<CgenNode> *l = nds; l; l = l->tl()) {
+	CgenNodeP node = l->hd();
+
+	if (node->name == Object || node->name == Int || node->name == Bool || node->name == Str || node->name == IO) continue; // TODO optimize
+
+	emit_init_ref(node->name, str); str << LABEL;
+	emit_stack_entry_bookkeeping(str);
+	// init's calling convention: object being initialized will always be passed in $a0
+	emit_move(SELF, ACC, str); // destination, source. TODO why is this needed? because the initialization code may need to refer to self?
+	str << JAL; emit_init_ref(node->parent, str); str << endl;
+	// TODO initialization code goes here
+	emit_move(ACC, SELF, str); // Q: why is this needed?? ACC usually contains "return value" which I don't think has significance here. Anyways, why are we modifying it? Ans. because we want to return "SELF" from new
+	emit_stack_exit_bookkeeping(str);
+  }
+}
+
+void CgenNode::print_dispatch_table(ostream& s, CgenNodeP original_node) {
+  if (parentnd) {
+    parentnd->print_dispatch_table(s, original_node);
+  }
+
+  for (unsigned int i = 0; i < dispatch_order.size(); i++) {
+    Symbol method = dispatch_order[i];
+    s << WORD; emit_method_ref(original_node->get_method_defining_class(method), method, s); s << endl;
+  }
+}
+
+void CgenClassTable::dispatch_tables() {
+  CgenNodeP objectNode = probe(Object);
+  objectNode->own_methods = {cool_abort, type_name, copy};
+  objectNode->dispatch_order = {cool_abort, type_name, copy};
+  objectNode->dispatch_offset = 0;
+
+  CgenNodeP IONode = probe(IO);
+  IONode->own_methods = {out_string, out_int, in_string, in_int};
+  IONode->dispatch_order = {out_string, out_int, in_string, in_int};
+  IONode->dispatch_offset = 3;
+
+  CgenNodeP stringNode = probe(Str);
+  stringNode->own_methods = {length, concat, substr};
+  stringNode->dispatch_order = {length, concat, substr};
+  stringNode->dispatch_offset = 3;
+
+
+  std::queue<CgenNodeP> q;
+  q.push(root());
+
+  // INITIALIZE the dispatch info
+  CgenNodeP node;
+  while(!q.empty()) { // proceed in BFS manner
+    node = q.front();
+    q.pop();
+
+    if (!(node->name == Object || node->name == IO || node->name == Str)) {
+      node->dispatch_offset = node->parentnd->dispatch_order.size() + node->parentnd->dispatch_offset;
+
+      Features features = node->features;
+      for (int i = 0; i < features->len(); i++) {
+        Feature f = features->nth(i);
+        if(!f->isattr()) {
+          if (node->parentnd && node->parentnd->get_method_offset(f->get_name()) == -1) {
+            node->dispatch_order.push_back(f->get_name());
+          }
+
+          node->own_methods.push_back(f->get_name());
+        }
+      }
+    }
+    // the node is ready here, we can process it 
+    emit_disptable_ref(node->name, str); str << LABEL;
+
+    /*
+    for (std::vector<Symbol>::const_iterator i = node->own_methods.begin(); i != node->own_methods.end(); ++i) {
+      cout << *i << ":"; 
+      cout << node->get_method_defining_class(*i) << " ";
+    }
+
+    cout << endl;
+
+    for (std::vector<Symbol>::const_iterator i = node->dispatch_order.begin(); i != node->dispatch_order.end(); ++i)
+      cout << *i << " "; 
+    cout << endl;
+    */
+
+    node->print_dispatch_table(str, node);
+
+    // enqueue neighbors 
+    for(List<CgenNode> *l = node->children; l; l = l->tl()) {
+      q.push(l->hd());
+    }
+  }
+}
+
 void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
 {
     List<CgenNode> *list = node->get_children();
@@ -1005,6 +1208,51 @@ void CgenClassTable::emit_class_nameTab() {
   }
 }
 
+// #define RETURN_ADDRESS_OFFSET   -0
+// #define SELF_OBJECT_OFFSET      -1
+// #define CONTROL_LINK_OFFSET     -2
+void method_code(Symbol class_name, method_class *m, ostream &s) {
+  emit_method_ref(class_name, m->name, s); s << LABEL;
+      emit_push(RA, s);
+      emit_push(SELF, s);
+      emit_push(FP, s);
+      emit_addiu(FP, SP, 4, s); // now it points to this method's frame
+
+  int arglen = m->formals->len();
+
+  // copy all the arguments
+  for (int i = 0; i < arglen; i++) {
+    Formal f = m->formals->nth(i);
+    emit_load(ACC, -i, FP, s);
+    s << JAL; emit_method_ref(Object, copy, s); s << endl;// stores copy in $a0
+    emit_push(ACC, s);
+  }
+  // all copied args will be stored in $fp + ARGS_OFFSET + i
+
+  m->expr->code(s); // whatever code runs, its return value will be in $a0, we don't need to change anything to return it
+  emit_shrink_stack(arglen, s); // strip all copied args
+  emit_pop(FP, s);
+  emit_pop(SELF, s);
+  emit_pop(RA, s);
+  emit_return(s); // TODO
+}  
+
+void CgenClassTable::the_class_methods() {
+  for(List<CgenNode> *l = nds; l; l = l->tl()) {
+	CgenNodeP node = l->hd();
+    if (node->basic_status == Basic) continue;
+
+    Features features = node->features;
+    for (int i = 0; i < features->len(); i++) {
+      Feature f = features->nth(i);
+      if(!f->isattr()) {
+        method_class* method = dynamic_cast<method_class*>(f);
+        method_code(node->name, method, str);
+      }
+    }
+  }
+}
+
 void CgenClassTable::code()
 {
   if (cgen_debug) cout << "coding global data" << endl;
@@ -1027,6 +1275,8 @@ void CgenClassTable::code()
   if (cgen_debug) cout << "emiting class_nameTab" << endl;
   emit_class_nameTab();
 //                   - dispatch tables
+  if (cgen_debug) cout << "dispatch tables" << endl;
+  dispatch_tables();
 //
 
   if (cgen_debug) cout << "coding global text" << endl;
@@ -1034,8 +1284,15 @@ void CgenClassTable::code()
 
 //                 Add your code to emit
 //                   - object initializer
+//
+  if (cgen_debug) cout << "Object initializers" << endl;
+  initializers_code();
+
 //                   - the class methods
+  if (cgen_debug) cout << "The class methods" << endl;
+  the_class_methods();
 //                   - etc...
+
 
 }
 
@@ -1072,6 +1329,7 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
 //
 //*****************************************************************
 
+
 void assign_class::code(ostream &s) {
 }
 
@@ -1079,6 +1337,13 @@ void static_dispatch_class::code(ostream &s) {
 }
 
 void dispatch_class::code(ostream &s) {
+  /**
+   * Steps:
+   * Find out f
+   * Then use slide 64 from lec 10
+   * to find out f, we will need to access the static data of dispatch tables and jalr to it
+   * Before we call f, we must prepare the activation record for it.
+   **/
 }
 
 void cond_class::code(ostream &s) {
@@ -1097,15 +1362,41 @@ void let_class::code(ostream &s) {
 }
 
 void plus_class::code(ostream &s) {
+  s << "# plus class begin" << endl;
+  e1->code(s);
+  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
+  e2->code(s);
+  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_add(ACC, T1, ACC, s); // return expression's value in $a0
+  emit_shrink_stack(s); // TODO possilby simplify code by defining a pop_stack and this could be interchanged with previous instruction
+  s << "# plus class end" << endl;
 }
 
 void sub_class::code(ostream &s) {
+  e1->code(s);
+  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
+  e2->code(s);
+  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_sub(ACC, T1, ACC, s); // return expression's value in $a0
+  emit_shrink_stack(s); 
 }
 
 void mul_class::code(ostream &s) {
+  e1->code(s);
+  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
+  e2->code(s);
+  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_mul(ACC, T1, ACC, s); // return expression's value in $a0
+  emit_shrink_stack(s);
 }
 
 void divide_class::code(ostream &s) {
+  e1->code(s);
+  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
+  e2->code(s);
+  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_div(ACC, T1, ACC, s); // return expression's value in $a0
+  emit_shrink_stack(s);
 }
 
 void neg_class::code(ostream &s) {
