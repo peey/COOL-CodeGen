@@ -1381,7 +1381,7 @@ void assign_class::code(CgenNodeP node, ostream &s) {
 
 void static_dispatch_class::code(CgenNodeP node, ostream &s) {
   node->symbol_table->enterscope();
-
+  
   node->symbol_table->exitscope();
 }
 
@@ -1391,11 +1391,39 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
    * Find out f
    * Then use slide 64 from lec 10
    * to find out f, we will need to access the static data of dispatch tables and jalr to it
-   * Before we call f, we must prepare the activation record for it.
+   * f prepares its own activation record
    **/
-  node->symbol_table->enterscope();
 
-  node->symbol_table->exitscope();
+  /*
+   Expression expr;
+   Symbol type_name;
+   Symbol name;
+   Expressions actual;
+   */
+
+  s << "# dispatch class begin" << endl;
+
+  expr->code(node, s);
+  int offset = node->get_method_offset(name);
+  emit_load(T1, DISPTABLE_OFFSET, SELF, s);
+  //emit_addiu(T1, SELF, DISPTABLE_OFFSET*4, s);
+  //emit_load_address(T2, T1, s); // T1 had address to address to disptable, T2 has address to disptable
+  //emit_addiu(T1, T2, offset*4, s); // T1 now has address to the function we need to call
+  emit_load(T2, offset, T1, s); 
+
+  Expressions exprs = actual;
+  for (int i = actual->len() - 1; i >= 0 ; i--) {
+    Expression arg = actual->nth(i);
+    arg->code(node, s);
+    emit_push(ACC, s);
+  }
+
+  //node->symbol_table->enterscope();
+
+  emit_jalr(T2, s); // actually jump
+  
+  //node->symbol_table->exitscope();
+  s << "# dispatch class end" << endl;
 }
 
 void cond_class::code(CgenNodeP node, ostream &s) {
