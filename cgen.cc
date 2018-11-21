@@ -1102,6 +1102,10 @@ void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
                     << WORD << 3 << endl
                     << WORD ; emit_disptable_ref(s, str); str << endl;
                 str << WORD; emit_protobj_ref(s, str); str << endl;
+
+                List<CgenNode>* l = node->get_children();
+                if(list_length(l) > 0)
+                    rec_protObj(node, str);
             }
             else if(s == Int)
             {
