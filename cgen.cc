@@ -939,16 +939,6 @@ Symbol CgenNode::get_method_defining_class(Symbol method) {
    }
 }
 
-CgenNodeP CgenClassTable::get_node_from_tag(int tag) {
-  for(List<CgenNode> *l = nds; l; l = l->tl()) {
-       CgenNodeP node = l->hd();
-       if (node->assigned_tag == tag) {
-         return node;
-       }
-  }
-  cout << "Error: node corresponding to the tag " << tag << " does not exist" << endl;
-}
-
 void CgenClassTable::emit_class_nameTab() {
   str << CLASSNAMETAB << LABEL; 
   int n = list_length(nds);
@@ -1195,17 +1185,6 @@ void CgenClassTable::emit_class_protobj(CgenNodeP node, int flag)
         }
         flag++;
     }
-}
-
-void CgenClassTable::emit_class_nameTab() {
-  // TODO use the order of nds for class tags
-  str << CLASSNAMETAB << LABEL;
-  int n = list_length(nds);
-  for(int i = 0; i < n; i++)
-  { // this loop has no use but we don't know the
-	CgenNodeP node = get_node_from_tag(i);
-	str << WORD; stringtable.lookup_string(node->name->get_string())->code_ref(str); str << endl;
-  }
 }
 
 // #define RETURN_ADDRESS_OFFSET   -0
