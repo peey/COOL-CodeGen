@@ -33,6 +33,8 @@
 
 int LABEL_SEQ = 1000;
 
+int LABEL_SEQ = 1000;
+
 extern void emit_string_constant(ostream& str, char *s);
 extern int cgen_debug;
 
@@ -1478,9 +1480,46 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
 }
 
 void cond_class::code(CgenNodeP node, ostream &s) {
+    s << "# cond_class begins" << endl;
+
+    int fbranch = LABEL_SEQ++;
+    int tbranch = LABEL_SEQ++;
+    int ebranch = LABEL_SEQ++;
+
+    pred->code(node, s);    // stores 1 in $a0 if true, otherwise stores 0
+    emit_load(ACC, 3, ACC, s);
+    emit_bne(ACC, ZERO, tbranch, s);
+
+    s << "# false branch" << endl;
+    emit_label_def(fbranch, s);     // false branch
+    else_exp->code(node, s);
+    emit_branch(ebranch, s);
+
+    s << "# true branch" << endl;
+    emit_label_def(tbranch, s);     // true branch
+    then_exp->code(node, s);
+
+    s << "# if_end" << endl;
+    emit_label_def(ebranch, s);     // if_end (fi)
 }
 
 void loop_class::code(CgenNodeP node, ostream &s) {
+    s << "# loop_class begins" << endl;
+
+    int loop_branch = LABEL_SEQ++;
+    int end_branch = LABEL_SEQ++;
+
+    s << "# loop starts" << endl;
+    emit_label_def(loop_branch, s);
+    pred->code(node, s);
+    emit_load(ACC, 3, ACC, s);
+    emit_beq(ACC, ZERO, end_branch, s);
+    body->code(node, s);
+    emit_branch(loop_branch, s);
+
+    s << "# loop terminates" << endl;
+    emit_label_def(end_branch, s);
+    emit_move(ACC, ZERO, s);
 }
 
 void typcase_class::code(CgenNodeP node, ostream &s) {
@@ -1535,6 +1574,14 @@ void typcase_class::code(CgenNodeP node, ostream &s) {
 }
 
 void block_class::code(CgenNodeP node, ostream &s) {
+    s << "# block_class begins" << endl;
+
+    Expression e;
+    for(int i=0; i<body->len(); i++)
+    {
+        e = body->nth(i);
+        e->code(node, s);
+    }
 }
 
 void let_class::code(CgenNodeP node, ostream &s) {
@@ -1559,7 +1606,7 @@ void plus_class::code(CgenNodeP node, ostream &s) {
   e1->code(node, s);
   emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
   e2->code(node, s);
-  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_load(T1, 1, SP, s); // load e2's return value in t1
   emit_add(ACC, T1, ACC, s); // return expression's value in $a0
   emit_shrink_stack(s); // TODO possilby simplify code by defining a pop_stack and this could be interchanged with previous instruction
   s << "# plus class end" << endl;
@@ -1569,7 +1616,7 @@ void sub_class::code(CgenNodeP node, ostream &s) {
   e1->code(node, s);
   emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
   e2->code(node, s);
-  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_load(T1, 1, SP, s); // load e2's return value in t1
   emit_sub(ACC, T1, ACC, s); // return expression's value in $a0
   emit_shrink_stack(s);
 }
@@ -1578,7 +1625,7 @@ void mul_class::code(CgenNodeP node, ostream &s) {
   e1->code(node, s);
   emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
   e2->code(node, s);
-  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_load(T1, 1, SP, s); // load e2's return value in t1
   emit_mul(ACC, T1, ACC, s); // return expression's value in $a0
   emit_shrink_stack(s);
 }
@@ -1587,24 +1634,104 @@ void divide_class::code(CgenNodeP node, ostream &s) {
   e1->code(node, s);
   emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
   e2->code(node, s);
-  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_load(T1, 1, SP, s); // load e2's return value in t1
   emit_div(ACC, T1, ACC, s); // return expression's value in $a0
   emit_shrink_stack(s);
 }
 
 void neg_class::code(CgenNodeP node, ostream &s) {
+    s << "# neg_class begins" << endl;
+
+    e1->code(node, s);
+    emit_load(T1, 3, ACC, s);
+    emit_neg(T1, T1, s);
+    emit_store(T1, 3, ACC, s);
 }
 
 void lt_class::code(CgenNodeP node, ostream &s) {
+    s << "# lt_class begins" << endl;
+
+    int true_label = LABEL_SEQ++;
+    int end_branch = LABEL_SEQ++;
+
+    e1->code(node, s);
+    emit_push(ACC, s);
+    e2->code(node, s);
+    emit_move(T1, ACC, s);
+    emit_load(T1, 3, T1, s);
+    emit_load(ACC, 1, SP, s);
+    emit_load(ACC, 3, ACC, s);
+    emit_shrink_stack(s);
+
+    s << "# jump to label if true" << endl;
+    emit_blt(ACC, T1, true_label, s);   // jump to true_label if true
+    emit_load_bool(ACC, falsebool, s);
+    emit_branch(end_branch, s);
+
+    emit_label_def(true_label, s);
+    emit_load_bool(ACC, truebool, s);
+
+    emit_label_def(end_branch, s);
 }
 
 void eq_class::code(CgenNodeP node, ostream &s) {
+    s << "# eq_class begins" << endl;
+
+    int end_label = LABEL_SEQ++;
+
+    e1->code(node, s);
+    emit_push(ACC, s);
+    e2->code(node, s);
+    emit_load(T1, 1, SP, s);
+    emit_load(T1, 3, T1, s);
+    emit_move(T2, ACC, s);
+    emit_load(T2, 3, T2, s);
+    emit_shrink_stack(s);
+
+    emit_load_bool(ACC, truebool, s);
+    emit_beq(T1, T2, end_label, s);
+    emit_load_bool(A1, falsebool, s);
+    emit_jal("equality_test", s);
+    emit_label_def(end_label, s);
 }
 
 void leq_class::code(CgenNodeP node, ostream &s) {
+    s << "# leq_class begins" << endl;
+
+    int true_branch = LABEL_SEQ++;
+    int end_branch = LABEL_SEQ++;
+
+    e1->code(node, s);
+    emit_push(ACC, s);
+    e2->code(node, s);
+    emit_move(T2, ACC, s);
+    emit_load(T2, 3, T2, s);
+    emit_load(T1, 1, SP, s);
+    emit_load(T1, 3, T1, s);
+    emit_shrink_stack(s);
+
+    emit_bleq(T1, T2, true_branch, s);
+    emit_load_bool(ACC, falsebool, s);
+    emit_branch(end_branch, s);
+
+    emit_label_def(true_branch, s);
+    emit_load_bool(ACC, truebool, s);
+
+    emit_label_def(end_branch, s);
 }
 
 void comp_class::code(CgenNodeP node, ostream &s) {
+    s << "# comp_class begins" << endl;
+
+    int false_branch = LABEL_SEQ++;
+
+    e1->code(node, s);
+    emit_move(T1, ACC, s);
+    emit_load(T1, 3, T1, s);
+    emit_load_bool(ACC, truebool, s);
+    emit_beqz(T1, false_branch, s);
+    emit_load_bool(ACC, falsebool, s);
+    emit_label_def(false_branch, s);
 }
 
 void int_const_class::code(CgenNodeP node, ostream& s)
