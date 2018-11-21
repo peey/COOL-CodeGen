@@ -956,7 +956,18 @@ void CgenClassTable::initializers_code() {
 	// init's calling convention: object being initialized will always be passed in $a0
 	emit_move(SELF, ACC, str); // destination, source. TODO why is this needed? because the initialization code may need to refer to self?
 	str << JAL; emit_init_ref(node->parent, str); str << endl;
-	// TODO initialization code goes here
+
+    Features features = node->features;
+    for (int i = 0; i < features->len(); i++) {
+      Feature f = features->nth(i);
+      if(f->isattr()) {
+        attr_class *attr = dynamic_cast<attr_class*>(f);
+        if(attr->init) { // it will never be null I guess, at most no expr which already produces nothing
+          attr->init->code(node, str);
+        }
+      }
+    }
+
 	emit_move(ACC, SELF, str); // Q: why is this needed?? ACC usually contains "return value" which I don't think has significance here. Anyways, why are we modifying it? Ans. because we want to return "SELF" from new
 	emit_stack_exit_bookkeeping(str);
   }
@@ -1210,6 +1221,8 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
 
   int arglen = m->formals->len();
 
+  if (cgen_debug) cout << "check 1" << endl;
+
   // copy all the arguments
   for (int i = 0; i < arglen; i++) {
     Formal f = m->formals->nth(i);
@@ -1219,13 +1232,18 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
   }
   // all copied args will be stored in $fp + ARGS_OFFSET + i
 
+  if (cgen_debug) cout << "check 2" << endl;
+
   node->current_method = m;
+  if (cgen_debug) cout << "check 3 " << m->expr << endl;
   m->expr->code(node, s); // whatever code runs, its return value will be in $a0, we don't need to change anything to return it
+  if (cgen_debug) cout << "check 4" << endl;
   emit_shrink_stack(arglen, s); // strip all copied args
   emit_pop(FP, s);
   emit_pop(SELF, s);
   emit_pop(RA, s);
   emit_return(s); // TODO Q: what to-do???
+
 }
 
 void CgenClassTable::the_class_methods() {
@@ -1238,7 +1256,9 @@ void CgenClassTable::the_class_methods() {
       Feature f = features->nth(i);
       if(!f->isattr()) {
         method_class* method = dynamic_cast<method_class*>(f);
+        if (cgen_debug) cout << "processing method " << node->name << ":" << method->name << endl;
         method_code(node, method, str);
+        if (cgen_debug) cout << "processed method " << node->name << ":" << method->name << endl;
       }
     }
   }
@@ -1380,9 +1400,32 @@ void assign_class::code(CgenNodeP node, ostream &s) {
 }
 
 void static_dispatch_class::code(CgenNodeP node, ostream &s) {
-  node->symbol_table->enterscope();
-  
-  node->symbol_table->exitscope();
+  /*
+   Expression expr;
+   Symbol type_name;
+   Symbol name;
+   Expressions actual;
+   */
+
+
+  s << "# static dispatch class begin" << endl;
+
+  //TODO pass self....
+  expr->code(node, s);
+
+  Expressions exprs = actual;
+  for (int i = actual->len() - 1; i >= 0 ; i--) {
+    Expression arg = actual->nth(i);
+    arg->code(node, s);
+    emit_push(ACC, s);
+
+    if (i == 1) { // one of builtins takes second arg in $a1
+      emit_move(A1, ACC, s);
+    }
+  }
+
+  s << JAL; emit_method_ref(type_name, name, s); s << endl;
+  s << "# static dispatch class end" << endl;
 }
 
 void dispatch_class::code(CgenNodeP node, ostream &s) {
@@ -1396,14 +1439,18 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
 
   /*
    Expression expr;
-   Symbol type_name;
    Symbol name;
    Expressions actual;
    */
 
   s << "# dispatch class begin" << endl;
 
+  if (cgen_debug) cout << "checkpoint 1" << endl;
+
   expr->code(node, s);
+
+  if (cgen_debug) cout << "checkpoint 1" << endl;
+
   int offset = node->get_method_offset(name);
   emit_load(T1, DISPTABLE_OFFSET, SELF, s);
   //emit_addiu(T1, SELF, DISPTABLE_OFFSET*4, s);
@@ -1416,6 +1463,10 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
     Expression arg = actual->nth(i);
     arg->code(node, s);
     emit_push(ACC, s);
+
+    if (i == 1) { // one of builtins takes second arg in $a1
+      emit_move(A1, ACC, s);
+    }
   }
 
   //node->symbol_table->enterscope();
@@ -1575,13 +1626,27 @@ void bool_const_class::code(CgenNodeP node, ostream& s)
 }
 
 void new__class::code(CgenNodeP node, ostream &s) {
+  cout << "# new class begin" << endl;
+  s << LW; emit_protobj_ref(type_name, s); s << endl;
+  s << JAL; 
+  emit_method_ref(Object, idtable.lookup_string("copy"), s); 
+  s << endl; // result is in $a0
+  cout << "# new class end" << endl;
 }
 
 void isvoid_class::code(CgenNodeP node, ostream &s) {
+
 }
 
 void no_expr_class::code(CgenNodeP node, ostream &s) {
+
 }
 
 void object_class::code(CgenNodeP node, ostream &s) {
+  if (name != self) {
+    int *offset = node->symbol_table->probe(name);
+    emit_load(ACC, *offset, FP, s);
+  } else {
+    emit_move(ACC, SELF, s);
+  }
 }

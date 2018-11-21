@@ -53,6 +53,11 @@ dotest:	cgen example.cl
 	@echo "\nRunning code generator on example.cl\n"
 	-./mycoolc example.cl
 
+debugtest:	cgen example.cl
+	@echo "\nRunning code generator on example.cl with debug mode enabled \n"
+	-./mycoolc -c example.cl
+
+
 ${LIBS}:
 	${CLASSDIR}/etc/link-object ${ASSN} $@
 
