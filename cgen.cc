@@ -1254,20 +1254,20 @@ void CgenClassTable::runtime_type_check() {
   while(!q.empty()) { // TODO: this could be a simple array traversal, bfs not needed
     node = q.front();
     q.pop();
-    emit_addiu(T2, ZERO, node->assigned_tag, str); // load immidaite value of tag into T2
+    emit_load_imm(T2, node->assigned_tag, str); // load immidaite value of tag into T2
     int acc_label = LABEL_SEQ++;
     emit_bne(ACC, T2, acc_label, str); // if ACC is not T2, we'll jump to next one
     // if it is, then return true if any of the parents match A1
         CgenNodeP parent = node;
-        emit_addiu(T1, ZERO,  1,str); // load true in t1
+        emit_load_imm(T1, 1, str); // load true in t1
         while(parent != NULL) {
-          emit_addiu(T3, ZERO, parent->assigned_tag, str); // load immidaite value of parent's tag into T3
+          emit_load_imm(T3, parent->assigned_tag, str); // load immidaite value of parent's tag into T3
           emit_bne(A1, T3, LABEL_SEQ, str);
           emit_return(str);
           emit_label_def(LABEL_SEQ++, str);
           parent = parent->parentnd;
         }
-        emit_addiu(T1, ZERO, 0, str); // load true in t1
+        emit_load_imm(T1, 0, str); // load false in t1, no match
         emit_return(str);
 
     emit_label_def(acc_label, str);
@@ -1363,6 +1363,7 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
 
 
 void assign_class::code(CgenNodeP node, ostream &s) {
+  s << "# assign class begin" << endl;
   /*
    Symbol name;
    Expression expr;
@@ -1375,6 +1376,7 @@ void assign_class::code(CgenNodeP node, ostream &s) {
     int offset = node->get_attribute_offset(name);  // we'll store it in SELF + get_attribute_offset
     emit_store(ACC, offset, SELF, s); // store init in the object offset
   }
+  s << "# assign class end" << endl;
 }
 
 void static_dispatch_class::code(CgenNodeP node, ostream &s) {
@@ -1403,6 +1405,7 @@ void loop_class::code(CgenNodeP node, ostream &s) {
 }
 
 void typcase_class::code(CgenNodeP node, ostream &s) {
+  s << "# typcase class begin" << endl;
   /*
    Expression expr;
    Cases cases;
@@ -1413,13 +1416,14 @@ void typcase_class::code(CgenNodeP node, ostream &s) {
    */
   expr->code(node, s); // now we have the expression in $a0
   emit_push(ACC, s); // save accu on stack
+  emit_load(ACC, 0, ACC, s); // load classtag in ACC
 
   int all_branches_end_label = LABEL_SEQ++;
   int next_case_label;
   for (int i = 0; i < cases->len(); i++) {
     next_case_label = LABEL_SEQ++;
     branch_class* b = dynamic_cast<branch_class*>(cases->nth(i));
-    emit_addiu(A1, ZERO, node->class_table->probe(b->type_decl)->assigned_tag, s);
+    emit_load_imm(A1, node->class_table->probe(b->type_decl)->assigned_tag, s);
     emit_jal(RUNTIME_TYPE_CHECK, s);
     emit_beqz(T1, next_case_label, s); // if T1 false (where runtime typecheck returns its value), we go to next case
     emit_pop(ACC, s); // if not false, get back object pointer instead of its type...
@@ -1447,12 +1451,15 @@ void typcase_class::code(CgenNodeP node, ostream &s) {
   emit_jal("_case_abort", s);
 
   emit_label_def(all_branches_end_label, s); // continue executing, yay
+  emit_pop(ACC, s); // get back object's value, remove alloted value
+  s << "# typecase class end" << endl;
 }
 
 void block_class::code(CgenNodeP node, ostream &s) {
 }
 
 void let_class::code(CgenNodeP node, ostream &s) {
+  s << "# let class begin" << endl;
   init->code(node, s);
   node->symbol_table->enterscope();
 
@@ -1464,6 +1471,8 @@ void let_class::code(CgenNodeP node, ostream &s) {
   node->symbol_table->addid(identifier, offset); // FIXME possible off-by-one error
   body->code(node, s); // return of the body is return of this, stays in $a0
   node->symbol_table->exitscope();
+  emit_pop(ACC, s);
+  s << "# let class end" << endl;
 }
 
 void plus_class::code(CgenNodeP node, ostream &s) {
