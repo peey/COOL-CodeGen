@@ -1,3 +1,6 @@
+#include <map>
+#include <list>
+#include <vector>
 #include <assert.h>
 #include <stdio.h>
 #include "emit.h"
@@ -23,6 +26,7 @@ private:
    int stringclasstag;
    int intclasstag;
    int boolclasstag;
+   int availableclasstag;
 
 
 // The following methods emit code for
@@ -36,7 +40,11 @@ private:
 
 // Added functions
    void emit_class_nameTab();
-   void emit_class_protobj();
+   void emit_class_protobj(CgenNodeP, int);
+   bool check_symbol(Symbol);
+   void print_protObj(CgenNodeP);
+   void rec_protObj(CgenNodeP, ostream&);
+   CgenNodeP get_node_from_tag(int tag);
 
 // The following creates an inheritance graph from
 // a list of classes.  The graph is implemented as
@@ -54,15 +62,18 @@ public:
    CgenNodeP root();
 };
 
-
 // this just stores class heirarchy information?
 // that's useless except for method dispatch
 class CgenNode : public class__class {
 private:
    CgenNodeP parentnd;                        // Parent of class
    List<CgenNode> *children;                  // Children of class. Question: why do we need a list of children?
-   Basicness basic_status;                    // `Basic' if class is basic
-                                              // `NotBasic' otherwise
+   Basicness basic_status;                    // `Basic' if class is basic, `NotBasic' otherwise
+
+public:
+   int assigned_tag;
+   std::vector<Symbol> attr_list;
+   std::vector<Symbol> attr_type;
 
 public:
    CgenNode(Class_ c,
@@ -74,6 +85,8 @@ public:
    void set_parentnd(CgenNodeP p);
    CgenNodeP get_parentnd() { return parentnd; }
    int basic() { return (basic_status == Basic); }
+   void assign_tag(int t) {assigned_tag = t;}
+   void print_vector(CgenNodeP node);
 };
 
 // do I need to define corresponding classes for other constants?

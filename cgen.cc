@@ -488,7 +488,7 @@ void BoolConst::code_def(ostream& s, int boolclasstag)
   // Add -1 eye catcher
   s << WORD << "-1" << endl;
 
-  cout << WORD << val << endl;
+  // cout << WORD << val << endl;
   code_ref(s);  s << LABEL                                  // label
       << WORD << boolclasstag << endl                       // class tag
       << WORD << (DEFAULT_OBJFIELDS + BOOL_SLOTS) << endl   // object size
@@ -545,23 +545,6 @@ void CgenClassTable::code_global_data()
       << WORD << boolclasstag << endl;
   str << STRINGTAG << LABEL
       << WORD << stringclasstag << endl;
-
-  // prot objects definition
-
-  // INT START
-  // Add -1 eye catcher
-  str << WORD << "-1" << endl; //TODO will we keep the GC tag in the protobj?
-
-  emit_protobj_ref(integer, str); str << LABEL           // label
-      << WORD << intclasstag << endl                      // class tag
-      << WORD << (DEFAULT_OBJFIELDS + INT_SLOTS) << endl  // object size
-      << WORD;
-
-      str << 0; // make .s files not give syntax error. Will add dispatch information later.
-
-      str << endl;                                          // dispatch table
-      str << WORD << 0 << endl;                           // integer value
-  // INT END
 }
 
 
@@ -646,6 +629,7 @@ CgenClassTable::CgenClassTable(Classes classes, ostream& s) : nds(NULL) , str(s)
    stringclasstag = 0 /* Change to your String class tag here */;
    intclasstag =    1 /* Change to your Int class tag here */;
    boolclasstag =   2 /* Change to your Bool class tag here */;
+   availableclasstag = 3;
 
    enterscope(); // where is this defined????? It isn't in the .h file
    if (cgen_debug) cout << "Building CgenClassTable" << endl;
@@ -793,6 +777,16 @@ void CgenClassTable::install_class(CgenNodeP nd)
       return;
     }
 
+  if (name == Str) {
+	nd->assign_tag(stringclasstag);
+  } else if (name == Int) {
+	nd->assign_tag(intclasstag);
+  } else if (name == Bool) {
+	nd->assign_tag(boolclasstag);
+  } else {
+	nd->assign_tag(availableclasstag++);
+  }
+
   // The class name is legal, so add it to the list of classes
   // and the symbol table.
   nds = new List<CgenNode>(nd,nds);
@@ -839,20 +833,176 @@ void CgenNode::set_parentnd(CgenNodeP p)
   parentnd = p;
 }
 
+CgenNodeP CgenClassTable::get_node_from_tag(int tag) {
+  for(List<CgenNode> *l = nds; l; l = l->tl()) {
+	CgenNodeP node = l->hd();
+	if (node->assigned_tag == tag) {
+	  return node;
+	}
+  }
+  cout << "Error: node corresponding to the tag " << tag << " does not exist" << endl;
+}
 
-void CgenClassTable::emit_class_nameTab()
+void CgenNode::print_vector(CgenNodeP node)
 {
-    // TODO use the order of nds for class tags
-    str << CLASSNAMETAB << LABEL;
-    for(List<CgenNode> *l = nds; l; l = l->tl()) {
-        CgenNodeP node = l->hd();
-        str << WORD; stringtable.lookup_string(node->name->get_string())->code_ref(str); str << endl;
+    List<CgenNode> *list = node->get_children();
+
+    for(; list!=NULL; list=list->tl())
+    {
+        node = list->hd();
+        Symbol s = node->get_name();
+        if(s != IO && s!= Int && s != Bool && s != Str)
+        {
+            cout << s << " : ";
+            for (unsigned int i = 0; i < node->attr_list.size(); i++)
+            {
+        		cout << node->attr_list.at(i) << " ";
+        	}
+            cout << endl;
+
+            List<CgenNode>* l = node->get_children();
+            if(list_length(l) > 0)
+                print_vector(node);
+        }
+        // else
+        // {
+        //     cout << s << endl;
+        // }
     }
 }
 
-void CgenClassTable::emit_class_protobj()
+void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
 {
-    
+    List<CgenNode> *list = node->get_children();
+    for(; list!= NULL; list=list->tl())
+    {
+        str << WORD << -1 << endl;
+
+        node = list->hd();
+        Symbol s = node->get_name();
+        if(s != IO && s!= Int && s != Bool && s != Str)
+        {
+            emit_protobj_ref(s, str); str << LABEL
+                << WORD << node->assigned_tag << endl
+                << WORD << node->attr_list.size()+3 << endl
+                << WORD ; emit_disptable_ref(s, str);
+            str << endl;
+
+            for (unsigned int i = 0; i < node->attr_list.size(); i++)
+            {
+        		str << WORD ;
+                emit_protobj_ref(node->attr_type.at(i), str);
+                str << endl;
+        	}
+
+            List<CgenNode>* l = node->get_children();
+            if(list_length(l) > 0)
+                rec_protObj(node, str);
+        }
+        else
+        {
+            if(s == IO)
+            {
+                emit_protobj_ref(s, str); str << LABEL
+                    << WORD << node->assigned_tag << endl
+                    << WORD << 3 << endl
+                    << WORD ; emit_disptable_ref(s, str); str << endl;
+                str << WORD; emit_protobj_ref(s, str); str << endl;
+            }
+            else if(s == Int)
+            {
+                emit_protobj_ref(s, str); str << LABEL
+                    << WORD << node->assigned_tag << endl
+                    << WORD << 4 << endl
+                    << WORD ; emit_disptable_ref(s, str); str << endl;
+                str << WORD ; emit_protobj_ref(s, str); str << endl;
+            }
+            else if(s == Bool)
+            {
+                emit_protobj_ref(s, str); str << LABEL
+                    << WORD << node->assigned_tag << endl
+                    << WORD << 4 << endl
+                    << WORD ; emit_disptable_ref(s, str); str << endl;
+                str << WORD ; emit_protobj_ref(s, str); str << endl;
+            }
+            else if(s == Str)
+            {
+                emit_protobj_ref(s, str); str << LABEL
+                    << WORD << node->assigned_tag << endl
+                    << WORD << 5 << endl
+                    << WORD ; emit_disptable_ref(s, str); str << endl;
+                str << WORD ; emit_protobj_ref(Int, str); str << endl;
+                str << WORD ; emit_protobj_ref(Str, str); str << endl;
+            }
+        }
+    }
+}
+
+void CgenClassTable::print_protObj(CgenNodeP node)
+{
+    // cout << node->get_name() << endl;
+    str << WORD << -1 << endl;
+    emit_protobj_ref(node->get_name(), str); str << LABEL
+        << WORD << node->assigned_tag << endl
+        << WORD << DEFAULT_OBJFIELDS << endl
+        << WORD; emit_disptable_ref(node->get_name(), str); str << endl;
+
+    rec_protObj(node, str);
+}
+
+bool CgenClassTable::check_symbol(Symbol s)
+{
+    if(s == IO || s == Int || s == Bool || s == Str)
+        return true;
+    else
+        return false;
+}
+
+void CgenClassTable::emit_class_protobj(CgenNodeP node, int flag)
+{
+    List<CgenNode> *list = node->get_children();
+    CgenNodeP parent = node;
+    for(; list!=NULL; list=list->tl())
+    {
+        node = list->hd();
+
+        if(flag == 0)               // taking parents attributes
+        {
+            node->attr_list = parent->attr_list;
+            node->attr_type = parent->attr_type;
+        }
+
+        Symbol s = node->get_name();
+        if(!check_symbol(s))
+        {
+            Features features = node->get_features();
+            for(int i=0; i<features->len(); i++)
+            {
+                Feature f = features->nth(i);
+                if(f->isattr())
+                {
+                    node->attr_list.push_back(f->get_name());
+                    node->attr_type.push_back(f->get_type());
+                }
+            }
+
+            List<CgenNode> *l = node->get_children();
+            if(list_length(l) > 0)              // taking care of inheritance
+                emit_class_protobj(node, 0);
+        }
+        flag++;
+    }
+}
+
+void CgenClassTable::emit_class_nameTab() {
+  // TODO use the order of nds for class tags
+  str << CLASSNAMETAB << LABEL;
+  int n = list_length(nds);
+  for(int i = 0; i < n; i++)
+  { // this loop has no use but we don't know the
+	CgenNodeP node = get_node_from_tag(i);
+	str << WORD; stringtable.lookup_string(node->name->get_string())->code_ref(str); str << endl;
+  }
 }
 
 void CgenClassTable::code()
@@ -868,6 +1018,11 @@ void CgenClassTable::code()
 
 //                 Add your code to emit
 //                   - prototype objects
+    if(cgen_debug) cout << "emitting prototype object" << endl;
+    CgenNodeP node = root();
+    emit_class_protobj(node, 0);        // finds no of attributes and their type
+    // node->print_vector(node);        // prints the tree for attributes
+    print_protObj(node);                // prints the stream on .s file
 //                   - class_nameTab
   if (cgen_debug) cout << "emiting class_nameTab" << endl;
   emit_class_nameTab();
