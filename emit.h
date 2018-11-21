@@ -25,6 +25,7 @@
 #define BOOLTAG              "_bool_tag"
 #define STRINGTAG            "_string_tag"
 #define HEAP_START           "heap_start"
+#define RUNTIME_TYPE_CHECK   "runtime_type_check"
 
 // Naming conventions
 #define DISPTAB_SUFFIX       "_dispTab"
