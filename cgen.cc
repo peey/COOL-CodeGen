@@ -33,8 +33,6 @@
 
 int LABEL_SEQ = 1000;
 
-int LABEL_SEQ = 1000;
-
 extern void emit_string_constant(ostream& str, char *s);
 extern int cgen_debug;
 
