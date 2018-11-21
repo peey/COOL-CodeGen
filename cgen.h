@@ -45,6 +45,7 @@ public:
    void initializers_code();
    void emit_class_protobj();
    void dispatch_tables();
+   void the_class_methods();
 
 // The following creates an inheritance graph from
 // a list of classes.  The graph is implemented as

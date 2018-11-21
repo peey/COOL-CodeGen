@@ -318,6 +318,19 @@ static void emit_branch(int l, ostream& s)
   s << endl;
 }
 
+void emit_shrink_stack(ostream &s) {
+  emit_addiu(SP, SP, 4, s); // pops stack?
+}
+
+void emit_shrink_stack(int n, ostream &s) { // shrink stack by n words
+  emit_addiu(SP, SP, n * 4, s);
+}
+
+void emit_pop(char* reg, ostream &s) {
+  emit_load(reg, 4, SP, s);
+  emit_shrink_stack(s);
+}
+
 //
 // Push a register on the stack. The stack grows towards smaller addresses.
 //
@@ -361,7 +374,7 @@ static void emit_gc_check(char *source, ostream &s)
   s << JAL << "_gc_check" << endl;
 }
 
-// STACK MANAGEMENT
+// STACK MANAGEMENT, used for initializers
 void emit_stack_entry_bookkeeping(ostream& s) {
   // based on how coolc manages stack
   emit_addiu(SP, SP, -12, s);
@@ -876,7 +889,7 @@ void CgenNode::set_parentnd(CgenNodeP p)
 
 int CgenNode::get_method_offset(Symbol method) {
    ptrdiff_t ix = find(dispatch_order.begin(), dispatch_order.end(), method) - dispatch_order.begin();
-   if (ix >= dispatch_order.size()) {
+   if (ix >= (unsigned) dispatch_order.size()) {
      if (parentnd != NULL) {
        return parentnd->get_method_offset(method);
      } else {
@@ -892,7 +905,7 @@ int CgenNode::get_method_offset(Symbol method) {
 Symbol CgenNode::get_method_defining_class(Symbol method) {
    ptrdiff_t ix = find(own_methods.begin(), own_methods.end(), method) - own_methods.begin();
    //cout << name << ":" << method << " " << ix << endl;
-   if (ix >= own_methods.size()) {
+   if (ix >= (unsigned) own_methods.size()) {
      //cout << "truth" << endl;
      if (parentnd != NULL) {
        return parentnd->get_method_defining_class(method);
@@ -969,9 +982,9 @@ void CgenNode::print_dispatch_table(ostream& s, CgenNodeP original_node) {
     parentnd->print_dispatch_table(s, original_node);
   }
 
-  for (int i = 0; i < dispatch_order.size(); i++) {
+  for (unsigned int i = 0; i < dispatch_order.size(); i++) {
     Symbol method = dispatch_order[i];
-    s << WORD << original_node->get_method_defining_class(method) << "." << method << endl;
+    s << WORD; emit_method_ref(original_node->get_method_defining_class(method), method, s); s << endl;
   }
 }
 
@@ -1042,6 +1055,51 @@ void CgenClassTable::dispatch_tables() {
   }
 }
 
+// #define RETURN_ADDRESS_OFFSET   -0
+// #define SELF_OBJECT_OFFSET      -1
+// #define CONTROL_LINK_OFFSET     -2
+void method_code(Symbol class_name, method_class *m, ostream &s) {
+  emit_method_ref(class_name, m->name, s); s << LABEL;
+      emit_push(RA, s);
+      emit_push(SELF, s);
+      emit_push(FP, s);
+      emit_addiu(FP, SP, 4, s); // now it points to this method's frame
+
+  int arglen = m->formals->len();
+
+  // copy all the arguments
+  for (int i = 0; i < arglen; i++) {
+    Formal f = m->formals->nth(i);
+    emit_load(ACC, -i, FP, s);
+    s << JAL; emit_method_ref(Object, copy, s); s << endl;// stores copy in $a0
+    emit_push(ACC, s);
+  }
+  // all copied args will be stored in $fp + ARGS_OFFSET + i
+
+  m->expr->code(s); // whatever code runs, its return value will be in $a0, we don't need to change anything to return it
+  emit_shrink_stack(arglen, s); // strip all copied args
+  emit_pop(FP, s);
+  emit_pop(SELF, s);
+  emit_pop(RA, s);
+  emit_return(s); // TODO
+}  
+
+void CgenClassTable::the_class_methods() {
+  for(List<CgenNode> *l = nds; l; l = l->tl()) {
+	CgenNodeP node = l->hd();
+    if (node->basic_status == Basic) continue;
+
+    Features features = node->features;
+    for (int i = 0; i < features->len(); i++) {
+      Feature f = features->nth(i);
+      if(!f->isattr()) {
+        method_class* method = dynamic_cast<method_class*>(f);
+        method_code(node->name, method, str);
+      }
+    }
+  }
+}
+
 void CgenClassTable::code()
 {
   if (cgen_debug) cout << "coding global data" << endl;
@@ -1073,6 +1131,8 @@ void CgenClassTable::code()
   initializers_code();
 
 //                   - the class methods
+  if (cgen_debug) cout << "The class methods" << endl;
+  the_class_methods();
 //                   - etc...
 
 
@@ -1111,6 +1171,7 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
 //
 //*****************************************************************
 
+
 void assign_class::code(ostream &s) {
 }
 
@@ -1118,6 +1179,13 @@ void static_dispatch_class::code(ostream &s) {
 }
 
 void dispatch_class::code(ostream &s) {
+  /**
+   * Steps:
+   * Find out f
+   * Then use slide 64 from lec 10
+   * to find out f, we will need to access the static data of dispatch tables and jalr to it
+   * Before we call f, we must prepare the activation record for it.
+   **/
 }
 
 void cond_class::code(ostream &s) {
@@ -1136,15 +1204,41 @@ void let_class::code(ostream &s) {
 }
 
 void plus_class::code(ostream &s) {
+  s << "# plus class begin" << endl;
+  e1->code(s);
+  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
+  e2->code(s);
+  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_add(ACC, T1, ACC, s); // return expression's value in $a0
+  emit_shrink_stack(s); // TODO possilby simplify code by defining a pop_stack and this could be interchanged with previous instruction
+  s << "# plus class end" << endl;
 }
 
 void sub_class::code(ostream &s) {
+  e1->code(s);
+  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
+  e2->code(s);
+  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_sub(ACC, T1, ACC, s); // return expression's value in $a0
+  emit_shrink_stack(s); 
 }
 
 void mul_class::code(ostream &s) {
+  e1->code(s);
+  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
+  e2->code(s);
+  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_mul(ACC, T1, ACC, s); // return expression's value in $a0
+  emit_shrink_stack(s);
 }
 
 void divide_class::code(ostream &s) {
+  e1->code(s);
+  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
+  e2->code(s);
+  emit_load(T1, 4, SP, s); // load e2's return value in t1
+  emit_div(ACC, T1, ACC, s); // return expression's value in $a0
+  emit_shrink_stack(s);
 }
 
 void neg_class::code(ostream &s) {
