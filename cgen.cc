@@ -1521,14 +1521,19 @@ void comp_class::code(CgenNodeP node, ostream &s) {
     s << "# comp_class begins" << endl;
 
     int false_branch = LABEL_SEQ++;
+    int end_branch = LABEL_SEQ++;
 
     e1->code(node, s);
     emit_move(T1, ACC, s);
     emit_load(T1, 3, T1, s);
-    emit_load_bool(ACC, truebool, s);
     emit_beqz(T1, false_branch, s);
     emit_load_bool(ACC, falsebool, s);
+    emit_branch(end_branch, s);
+
     emit_label_def(false_branch, s);
+    emit_load_bool(ACC, truebool, s);
+
+    emit_label_def(end_branch, s);
 }
 
 void int_const_class::code(CgenNodeP node, ostream& s)
@@ -1553,6 +1558,20 @@ void new__class::code(CgenNodeP node, ostream &s) {
 }
 
 void isvoid_class::code(CgenNodeP node, ostream &s) {
+    s << "# isvoid_class begins" << endl;
+
+    int void_branch = LABEL_SEQ++;
+    int end_branch = LABEL_SEQ++;
+
+    e1->code(node, s);
+    emit_beqz(ACC, void_branch, s);
+    emit_load_bool(ACC, falsebool, s);
+    emit_branch(end_branch, s);
+
+    emit_label_def(void_branch, s);
+    emit_load_bool(ACC, truebool, s);
+
+    emit_label_def(end_branch, s);
 }
 
 void no_expr_class::code(CgenNodeP node, ostream &s) {
