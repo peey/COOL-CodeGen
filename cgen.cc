@@ -327,7 +327,7 @@ void emit_shrink_stack(int n, ostream &s) { // shrink stack by n words
 }
 
 void emit_pop(char* reg, ostream &s) {
-  emit_load(reg, 4, SP, s);
+  emit_load(reg, 1, SP, s);
   emit_shrink_stack(s);
 }
 
@@ -381,7 +381,7 @@ void emit_stack_entry_bookkeeping(ostream& s) {
   emit_store(FP, 3, SP, s);
   emit_store(SELF, 2, SP, s);
   emit_store(RA, 1, SP, s);
-  emit_addiu(FP, SP, 1, s); // frame is now pointing to where we stored the FP on stack
+  emit_addiu(FP, SP, 4, s); // frame is now pointing to where we stored the FP on stack
   //TODO use a calling convention. That would add more bookeeping I suppose
 }
 
@@ -1190,8 +1190,8 @@ void CgenClassTable::emit_class_protobj(CgenNodeP node, int flag)
 // #define RETURN_ADDRESS_OFFSET   -0
 // #define SELF_OBJECT_OFFSET      -1
 // #define CONTROL_LINK_OFFSET     -2
-void method_code(Symbol class_name, method_class *m, ostream &s) {
-  emit_method_ref(class_name, m->name, s); s << LABEL;
+void method_code(CgenNodeP node, method_class *m, ostream &s) {
+  emit_method_ref(node->name, m->name, s); s << LABEL;
       emit_push(RA, s);
       emit_push(SELF, s);
       emit_push(FP, s);
@@ -1208,7 +1208,7 @@ void method_code(Symbol class_name, method_class *m, ostream &s) {
   }
   // all copied args will be stored in $fp + ARGS_OFFSET + i
 
-  m->expr->code(s); // whatever code runs, its return value will be in $a0, we don't need to change anything to return it
+  m->expr->code(node, s); // whatever code runs, its return value will be in $a0, we don't need to change anything to return it
   emit_shrink_stack(arglen, s); // strip all copied args
   emit_pop(FP, s);
   emit_pop(SELF, s);
@@ -1226,7 +1226,7 @@ void CgenClassTable::the_class_methods() {
       Feature f = features->nth(i);
       if(!f->isattr()) {
         method_class* method = dynamic_cast<method_class*>(f);
-        method_code(node->name, method, str);
+        method_code(node, method, str);
       }
     }
   }
@@ -1309,13 +1309,16 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
 //*****************************************************************
 
 
-void assign_class::code(ostream &s) {
+void assign_class::code(CgenNodeP node, ostream &s) {
+  /*
+   Symbol name;
+   Expression expr;
+   */
 }
 
-void static_dispatch_class::code(ostream &s) {
-}
+void static_dispatch_class::code(CgenNodeP node, ostream &s) {}
 
-void dispatch_class::code(ostream &s) {
+void dispatch_class::code(CgenNodeP node, ostream &s) {
   /**
    * Steps:
    * Find out f
@@ -1325,75 +1328,75 @@ void dispatch_class::code(ostream &s) {
    **/
 }
 
-void cond_class::code(ostream &s) {
+void cond_class::code(CgenNodeP node, ostream &s) {
 }
 
-void loop_class::code(ostream &s) {
+void loop_class::code(CgenNodeP node, ostream &s) {
 }
 
-void typcase_class::code(ostream &s) {
+void typcase_class::code(CgenNodeP node, ostream &s) {
 }
 
-void block_class::code(ostream &s) {
+void block_class::code(CgenNodeP node, ostream &s) {
 }
 
-void let_class::code(ostream &s) {
+void let_class::code(CgenNodeP node, ostream &s) {
 }
 
-void plus_class::code(ostream &s) {
+void plus_class::code(CgenNodeP node, ostream &s) {
   s << "# plus class begin" << endl;
-  e1->code(s);
+  e1->code(node, s);
   emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
-  e2->code(s);
+  e2->code(node, s);
   emit_load(T1, 4, SP, s); // load e2's return value in t1
   emit_add(ACC, T1, ACC, s); // return expression's value in $a0
   emit_shrink_stack(s); // TODO possilby simplify code by defining a pop_stack and this could be interchanged with previous instruction
   s << "# plus class end" << endl;
 }
 
-void sub_class::code(ostream &s) {
-  e1->code(s);
+void sub_class::code(CgenNodeP node, ostream &s) {
+  e1->code(node, s);
   emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
-  e2->code(s);
+  e2->code(node, s);
   emit_load(T1, 4, SP, s); // load e2's return value in t1
   emit_sub(ACC, T1, ACC, s); // return expression's value in $a0
   emit_shrink_stack(s); 
 }
 
-void mul_class::code(ostream &s) {
-  e1->code(s);
+void mul_class::code(CgenNodeP node, ostream &s) {
+  e1->code(node, s);
   emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
-  e2->code(s);
+  e2->code(node, s);
   emit_load(T1, 4, SP, s); // load e2's return value in t1
   emit_mul(ACC, T1, ACC, s); // return expression's value in $a0
   emit_shrink_stack(s);
 }
 
-void divide_class::code(ostream &s) {
-  e1->code(s);
+void divide_class::code(CgenNodeP node, ostream &s) {
+  e1->code(node, s);
   emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
-  e2->code(s);
+  e2->code(node, s);
   emit_load(T1, 4, SP, s); // load e2's return value in t1
   emit_div(ACC, T1, ACC, s); // return expression's value in $a0
   emit_shrink_stack(s);
 }
 
-void neg_class::code(ostream &s) {
+void neg_class::code(CgenNodeP node, ostream &s) {
 }
 
-void lt_class::code(ostream &s) {
+void lt_class::code(CgenNodeP node, ostream &s) {
 }
 
-void eq_class::code(ostream &s) {
+void eq_class::code(CgenNodeP node, ostream &s) {
 }
 
-void leq_class::code(ostream &s) {
+void leq_class::code(CgenNodeP node, ostream &s) {
 }
 
-void comp_class::code(ostream &s) {
+void comp_class::code(CgenNodeP node, ostream &s) {
 }
 
-void int_const_class::code(ostream& s)
+void int_const_class::code(CgenNodeP node, ostream& s)
 {
   //
   // Need to be sure we have an IntEntry *, not an arbitrary Symbol
@@ -1401,24 +1404,24 @@ void int_const_class::code(ostream& s)
   emit_load_int(ACC,inttable.lookup_string(token->get_string()),s);
 }
 
-void string_const_class::code(ostream& s)
+void string_const_class::code(CgenNodeP node, ostream& s)
 {
   emit_load_string(ACC,stringtable.lookup_string(token->get_string()),s);
 }
 
-void bool_const_class::code(ostream& s)
+void bool_const_class::code(CgenNodeP node, ostream& s)
 {
   emit_load_bool(ACC, BoolConst(val), s);
 }
 
-void new__class::code(ostream &s) {
+void new__class::code(CgenNodeP node, ostream &s) {
 }
 
-void isvoid_class::code(ostream &s) {
+void isvoid_class::code(CgenNodeP node, ostream &s) {
 }
 
-void no_expr_class::code(ostream &s) {
+void no_expr_class::code(CgenNodeP node, ostream &s) {
 }
 
-void object_class::code(ostream &s) {
+void object_class::code(CgenNodeP node, ostream &s) {
 }
