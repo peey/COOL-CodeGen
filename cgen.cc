@@ -161,6 +161,7 @@ void program_class::cgen(ostream &os)
 //  for symbolic names you can use to refer to the strings.
 //
 //////////////////////////////////////////////////////////////////////////////
+//
 
 static void emit_load(char *dest_reg, int offset, char *source_reg, ostream& s)
 {
@@ -375,6 +376,22 @@ static void emit_gc_check(char *source, ostream &s)
 {
   if (source != (char*)A1) emit_move(A1, source, s);
   s << JAL << "_gc_check" << endl;
+}
+
+static void emit_inspect_register(char *reg,  ostream& s) {
+  if (cgen_debug) { // cgen_debug because unlike just comments, this adds to the program output
+    s << "# begin code to inspect register " << reg << endl;
+    emit_move("$t7", ACC, s); // hoping no one uses temporary registers beyond T3. Use it to hold ACC's original value
+    emit_move(ACC, reg, s); // hoping no one uses temporary registers beyond T3
+    emit_load_imm("$v0", 1, s); // syscall 1 is print integer
+    s << "\tsyscall" << endl;
+    //newline
+    emit_load_imm(ACC, 10, s); // 10 is ascii for newline
+    emit_load_imm("$v0", 11, s); // syscall 4 is print string, but 11 is print char
+    s << "\tsyscall" << endl;
+    emit_move(ACC, "$t7", s); // restore ACC's original value
+    s << "# end code to inspect register " << reg << endl;
+  }
 }
 
 // STACK MANAGEMENT, used for initializers
@@ -1215,37 +1232,53 @@ void CgenClassTable::emit_class_protobj(CgenNodeP node, int flag)
 // #define SELF_OBJECT_OFFSET      -1
 // #define CONTROL_LINK_OFFSET     -2
 void method_code(CgenNodeP node, method_class *m, ostream &s) {
-  emit_method_ref(node->name, m->name, s); s << LABEL;
-      emit_push(RA, s);
-      emit_push(SELF, s);
-      emit_push(FP, s);
-      emit_addiu(FP, SP, 4, s); // now it points to this method's frame
 
-  int arglen = m->formals->len();
+  int arglen = m->formals->len(); // arglen + 1 below the stack pointer is stored the self object by the caller function
+
+  emit_method_ref(node->name, m->name, s); s << LABEL;
+      //emit_inspect_register(SP, s);
+      s << "# preparing frame" << endl;
+      if (!(m->name == main_meth && node->name == Main)) {// assume that for main, the correct value of self is already in the self object
+        emit_load(SELF, -arglen - 1, SP, s); 
+      }
+      emit_push(RA, s); // first on frame pointer - return address
+      emit_push(SELF, s); // second on the frame pointer - self object
+      emit_push(FP, s); // lastly, old fp becomes control link
+      emit_addiu(FP, SP, -12, s); // now FP points to this method's frame
+      s << "# prepared frame" << endl;
+      //emit_inspect_register(SP, s);
 
   if (cgen_debug) cout << "check 1" << endl;
 
   // copy all the arguments
   for (int i = 0; i < arglen; i++) {
     Formal f = m->formals->nth(i);
-    emit_load(ACC, -i, FP, s);
-    s << JAL; emit_method_ref(Object, copy, s); s << endl;// stores copy in $a0
+    emit_load(ACC, -(i + 1), FP, s); // at 0 we have retrun pointer, but at -1 we have the first argument, at -2 the second and so on
+    s << JAL; emit_method_ref(Object, copy, s); s << endl; // copy the argument and store then push the copied arg on the stack
     emit_push(ACC, s);
   }
+
   // all copied args will be stored in $fp + ARGS_OFFSET + i
 
   if (cgen_debug) cout << "check 2" << endl;
 
-  node->current_method = m;
-  if (cgen_debug) cout << "check 3 " << m->expr << endl;
-  m->expr->code(node, s); // whatever code runs, its return value will be in $a0, we don't need to change anything to return it
-  if (cgen_debug) cout << "check 4" << endl;
-  emit_shrink_stack(arglen, s); // strip all copied args
-  emit_pop(FP, s);
-  emit_pop(SELF, s);
-  emit_pop(RA, s);
-  emit_return(s); // TODO Q: what to-do???
+  node->current_method = m; // useful for calculating the number of arguments when storing locals
 
+  if (cgen_debug) cout << "check 3 " << m->expr << endl;
+
+  m->expr->code(node, s); // whatever code runs, its return value will be in $a0, so we don't need to touch it 
+  if (cgen_debug) cout << "check 4" << endl;
+
+  emit_shrink_stack(arglen, s); // strip all copied args
+
+  //emit_inspect_register(SP, s);
+  s << "# unwinding frame" << endl;
+  emit_pop(FP, s); // reset $fp to control link
+  emit_shrink_stack(s); // destroy stored value of self object 
+  emit_pop(RA, s); // restore the return value of call site and jump back to it in next instruction 
+  //emit_inspect_register(SP, s);
+  s << "# unwinded frame" << endl;
+  emit_return(s); 
 }
 
 void CgenClassTable::the_class_methods() {
@@ -1367,9 +1400,16 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
    children(NULL),
    basic_status(bstatus)
 {
-   stringtable.add_string(name->get_string());          // Add class name to string table
+   stringtable.add_string(name->get_string());  // Add class name to string table
    symbol_table->enterscope(); // initially enter some scope
    class_table = ct;
+}
+
+int CgenNode::allocate_local(Symbol name) {
+  int *offset = new int;
+  *offset =  -(ARGS_OFFSET + current_method->formals->len() + locals++);
+  symbol_table->addid(name, offset); // FIXME possible off-by-one error
+  return *offset;
 }
 
 
@@ -1383,15 +1423,25 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
 //
 //*****************************************************************
 
+void object_class::code(CgenNodeP node, ostream &s) {
+  if (name == self) {
+    emit_move(ACC, SELF, s);
+  } else {
+    if(node->symbol_table->lookup(name)) { 
+      int *offset = node->symbol_table->probe(name); // offset from FP is directly stored in the symbol table, so we don't need to do any more manipulations
+      emit_load(ACC, *offset, FP, s); 
+    } else {
+      int offset = node->get_attribute_offset(name);  // we'll load it from SELF + get_attribute_offset
+      emit_load(ACC, offset, SELF, s);
+    }
+  }
+}
 
 void assign_class::code(CgenNodeP node, ostream &s) {
+  // TODO call GC at the end of every assignment
   s << "# assign class begin" << endl;
-  /*
-   Symbol name;
-   Expression expr;
-   */
-  expr->code(node, s);
-  if(node->symbol_table->lookup(name)) { // -1 means that identifier is an object field
+  expr->code(node, s); // rhs is evaluated and resulting value will be in ACC
+  if(node->symbol_table->lookup(name)) {
     int *offset = node->symbol_table->probe(name);
     emit_store(ACC, *offset, FP, s); // store it in its stack position;
   } else {
@@ -1409,13 +1459,29 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
    Expressions actual;
    */
 
+  /** 
+   * For both dispatch and static dispatch, steps are
+   * 1. Get reference to the function
+   * 2. Push self object for the next function on stack
+   * 3. Push arguments on stack in reverse order
+   * 4. Emit jump statement
+   * 5. Restore our own self object. We don't need to restore return address since when control reaches end of this function, we're gonna load it from stack anyways
+   * 6. Restore our stack by tearing down args + expression
+   * Assumption: no premature returns in COOL
+   *
+   * Why does callee need to save self object and we need to do step 2? 
+   * There's no other clean way to do it. Any of the temp regs may be overwritten by the init expressions
+   * */
 
   s << "# static dispatch class begin" << endl;
 
-  //TODO pass self....
+  // step 1
   expr->code(node, s);
 
-  Expressions exprs = actual;
+  // step 2
+  emit_push(ACC, s);   
+  
+  // step 3
   for (int i = actual->len() - 1; i >= 0 ; i--) {
     Expression arg = actual->nth(i);
     arg->code(node, s);
@@ -1426,19 +1492,19 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
     }
   }
 
+  //emit_inspect_register(SP, s);
+  // step 4
   s << JAL; emit_method_ref(type_name, name, s); s << endl;
+
+  emit_load(SELF, SELF_OBJECT_OFFSET, FP, s); // step 5
+  //emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s);
+
+  emit_shrink_stack(actual->len() + 1, s); // step 6
+  //emit_inspect_register(SP, s);
   s << "# static dispatch class end" << endl;
 }
 
 void dispatch_class::code(CgenNodeP node, ostream &s) {
-  /**
-   * Steps:
-   * Find out f
-   * Then use slide 64 from lec 10
-   * to find out f, we will need to access the static data of dispatch tables and jalr to it
-   * f prepares its own activation record
-   **/
-
   /*
    Expression expr;
    Symbol name;
@@ -1447,20 +1513,13 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
 
   s << "# dispatch class begin" << endl;
 
-  if (cgen_debug) cout << "checkpoint 1" << endl;
-
+  // step 1
   expr->code(node, s);
 
-  if (cgen_debug) cout << "checkpoint 2" << endl;
-
-  int offset = node->get_method_offset(name);
-  emit_load(T1, DISPTABLE_OFFSET, SELF, s);
-  //emit_addiu(T1, SELF, DISPTABLE_OFFSET*4, s);
-  //emit_load_address(T2, T1, s); // T1 had address to address to disptable, T2 has address to disptable
-  //emit_addiu(T1, T2, offset*4, s); // T1 now has address to the function we need to call
-  emit_load(T2, offset, T1, s); 
-
-  Expressions exprs = actual;
+  // step 2
+  emit_push(ACC, s);   
+  
+  // step 3
   for (int i = actual->len() - 1; i >= 0 ; i--) {
     Expression arg = actual->nth(i);
     arg->code(node, s);
@@ -1471,11 +1530,20 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
     }
   }
 
-  //node->symbol_table->enterscope();
+  //emit_addiu(T1, SELF, DISPTABLE_OFFSET*4, s);
+  //emit_load_address(T2, T1, s); // T1 had address to address to disptable, T2 has address to disptable
+  //emit_addiu(T1, T2, offset*4, s); // T1 now has address to the function we need to call
 
-  emit_jalr(T2, s); // actually jump
+  // step 1 and 4
+  int offset = node->get_method_offset(name);
+  emit_load(T1, DISPTABLE_OFFSET, SELF, s);
+  emit_load(T2, offset, T1, s); 
+  emit_jalr(T2, s);
+
+  emit_load(SELF, SELF_OBJECT_OFFSET, FP, s); // step 5
+
+  emit_shrink_stack(actual->len() + 1, s); // step 6
   
-  //node->symbol_table->exitscope();
   s << "# dispatch class end" << endl;
 }
 
@@ -1523,6 +1591,7 @@ void loop_class::code(CgenNodeP node, ostream &s) {
 }
 
 void typcase_class::code(CgenNodeP node, ostream &s) {
+  //TODO handle void
   s << "# typcase class begin" << endl;
   /*
    Expression expr;
@@ -1533,7 +1602,7 @@ void typcase_class::code(CgenNodeP node, ostream &s) {
      Expression expr;
    */
   expr->code(node, s); // now we have the expression in $a0
-  emit_push(ACC, s); // save accu on stack
+  emit_push(ACC, s); // save expression under cases on stack
   emit_load(ACC, 0, ACC, s); // load classtag in ACC
 
   int all_branches_end_label = LABEL_SEQ++;
@@ -1544,32 +1613,24 @@ void typcase_class::code(CgenNodeP node, ostream &s) {
     emit_load_imm(A1, node->class_table->probe(b->type_decl)->assigned_tag, s);
     emit_jal(RUNTIME_TYPE_CHECK, s);
     emit_beqz(T1, next_case_label, s); // if T1 false (where runtime typecheck returns its value), we go to next case
-    emit_pop(ACC, s); // if not false, get back object pointer instead of its type...
 
-
-    // SAME CODE AS LET, minor todo: carve it out into a function? make it cleaner at the very least
-    node->symbol_table->enterscope();
-    // allocate space on stack for this identifier
-    emit_push(ACC, s);
-    // store its offset from $fp
-    int *offset = new int;
-    *offset =  -(node->current_method->formals->len() + node->locals++);
-    node->symbol_table->addid(b->name, offset); // FIXME possible off-by-one error
-    expr->code(node, s);
+    node->symbol_table->enterscope(); // SAME CODE AS LET, minor todo: carve it out into a function? make it cleaner at the very least
+    node->allocate_local(b->name); // the expression is already allocated, save its offset in symbol table
+    b->expr->code(node, s); // evaluate case's body
     node->symbol_table->exitscope();
-    b->expr->code(node, s);
-
 
     emit_branch(all_branches_end_label, s);
     emit_label_def(next_case_label, s);
   }
 
-  // last case is that we emit runtime error, case abort 1
-  emit_pop(ACC, s); // get back object's value
-  emit_jal("_case_abort", s);
+  
+  emit_shrink_stack(s); // remove local from stack even if we're going to error
+  emit_jal("_case_abort", s); // last case is that we emit runtime error, case abort 1
 
-  emit_label_def(all_branches_end_label, s); // continue executing, yay
-  emit_pop(ACC, s); // get back object's value, remove alloted value
+  emit_label_def(all_branches_end_label, s); // successful case matches end here to prevent fallthrough
+  emit_shrink_stack(s); // remove local from stack. We don't need to touch ACC since case's evaluation has set it to the right value
+  
+  node->locals--; // the stack space from $fp is freed up for more locals if need be
   s << "# typecase class end" << endl;
 }
 
@@ -1582,6 +1643,7 @@ void block_class::code(CgenNodeP node, ostream &s) {
         e = body->nth(i);
         e->code(node, s);
     }
+    s << "# block_class ends" << endl;
 }
 
 void let_class::code(CgenNodeP node, ostream &s) {
@@ -1593,7 +1655,7 @@ void let_class::code(CgenNodeP node, ostream &s) {
   emit_push(ACC, s);
   // store its offset from $fp
   int *offset = new int;
-  *offset =  -(node->current_method->formals->len() + node->locals++);
+  *offset =  -(ARGS_OFFSET + node->current_method->formals->len() + node->locals++);
   node->symbol_table->addid(identifier, offset); // FIXME possible off-by-one error
   body->code(node, s); // return of the body is return of this, stays in $a0
   node->symbol_table->exitscope();
@@ -1693,6 +1755,7 @@ void eq_class::code(CgenNodeP node, ostream &s) {
     emit_load_bool(A1, falsebool, s);
     emit_jal("equality_test", s);
     emit_label_def(end_label, s);
+    s << "# _class begins" << endl;
 }
 
 void leq_class::code(CgenNodeP node, ostream &s) {
@@ -1718,6 +1781,7 @@ void leq_class::code(CgenNodeP node, ostream &s) {
     emit_load_bool(ACC, truebool, s);
 
     emit_label_def(end_branch, s);
+    s << "# leq_class ends" << endl;
 }
 
 void comp_class::code(CgenNodeP node, ostream &s) {
@@ -1732,6 +1796,7 @@ void comp_class::code(CgenNodeP node, ostream &s) {
     emit_beqz(T1, false_branch, s);
     emit_load_bool(ACC, falsebool, s);
     emit_label_def(false_branch, s);
+    s << "# comp_class ends" << endl;
 }
 
 void int_const_class::code(CgenNodeP node, ostream& s)
@@ -1753,14 +1818,12 @@ void bool_const_class::code(CgenNodeP node, ostream& s)
 }
 
 void new__class::code(CgenNodeP node, ostream &s) {
-  /*
-  cout << "# new class begin" << endl;
+  s << "# new class begin" << endl;
   s << LA << ACC << "\t"; emit_protobj_ref(type_name, s); s << endl;
   s << JAL; 
   emit_method_ref(Object, idtable.lookup_string("copy"), s); 
   s << endl; // result is in $a0
-  cout << "# new class end" << endl;
-  */
+  s << "# new class end" << endl;
 }
 
 void isvoid_class::code(CgenNodeP node, ostream &s) {
@@ -1771,16 +1834,6 @@ void no_expr_class::code(CgenNodeP node, ostream &s) {
 
 }
 
-void object_class::code(CgenNodeP node, ostream &s) {
-  if (name == self) {
-    emit_move(ACC, SELF, s);
-  } else {
-    if(node->symbol_table->lookup(name)) { // -1 means that identifier is an object field
-      int *offset = node->symbol_table->probe(name);
-      emit_store(ACC, *offset, FP, s); // store it in its stack position;
-    } else {
-      int offset = node->get_attribute_offset(name);  // we'll store it in SELF + get_attribute_offset
-      emit_store(ACC, offset, SELF, s); // store init in the object offset
-    }
-  }
-}
+/**
+ *
+*/
