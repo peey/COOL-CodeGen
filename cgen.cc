@@ -1235,10 +1235,13 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
 
   int arglen = m->formals->len(); // arglen + 1 below the stack pointer is stored the self object by the caller function
 
+  bool mainmain = m->name == main_meth && node->name == Main; // if we're in Main.main
+
   emit_method_ref(node->name, m->name, s); s << LABEL;
       //emit_inspect_register(SP, s);
       s << "# preparing frame" << endl;
-      if (!(m->name == main_meth && node->name == Main)) {// assume that for main, the correct value of self is already in the self object
+      emit_inspect_register(SP, s);
+      if (!mainmain) {// assume that for main, the correct value of self is already in the self object
         emit_load(SELF, -arglen - 1, SP, s); 
       }
       emit_push(RA, s); // first on frame pointer - return address
@@ -1246,8 +1249,7 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
       emit_push(FP, s); // lastly, old fp becomes control link
       emit_addiu(FP, SP, -12, s); // now FP points to this method's frame
       s << "# prepared frame" << endl;
-      //emit_inspect_register(SP, s);
-
+      emit_inspect_register(SP, s);
   if (cgen_debug) cout << "check 1" << endl;
 
   // copy all the arguments
@@ -1257,6 +1259,7 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
     s << JAL; emit_method_ref(Object, copy, s); s << endl; // copy the argument and store then push the copied arg on the stack
     emit_push(ACC, s);
   }
+  emit_inspect_register(SP, s);
 
   // all copied args will be stored in $fp + ARGS_OFFSET + i
 
@@ -1268,15 +1271,18 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
 
   m->expr->code(node, s); // whatever code runs, its return value will be in $a0, so we don't need to touch it 
   if (cgen_debug) cout << "check 4" << endl;
+  emit_inspect_register(SP, s);
 
   emit_shrink_stack(arglen, s); // strip all copied args
 
+  emit_inspect_register(SP, s);
   //emit_inspect_register(SP, s);
   s << "# unwinding frame" << endl;
+  emit_inspect_register(SP, s);
   emit_pop(FP, s); // reset $fp to control link
   emit_shrink_stack(s); // destroy stored value of self object 
   emit_pop(RA, s); // restore the return value of call site and jump back to it in next instruction 
-  //emit_inspect_register(SP, s);
+  emit_inspect_register(FP, s);
   s << "# unwinded frame" << endl;
   emit_return(s); 
 }
@@ -1499,7 +1505,13 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
   emit_load(SELF, SELF_OBJECT_OFFSET, FP, s); // step 5
   //emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s);
 
-  emit_shrink_stack(actual->len() + 1, s); // step 6
+  bool mainmain = node->current_method->name == main_meth && node->name == Main; // if we're in Main.main
+  if (!mainmain) {
+    emit_shrink_stack(actual->len() + 1, s); // step 6
+  } else {
+    emit_shrink_stack(actual->len(), s); // step 6
+  }
+
   //emit_inspect_register(SP, s);
   s << "# static dispatch class end" << endl;
 }
@@ -1512,6 +1524,7 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
    */
 
   s << "# dispatch class begin" << endl;
+  emit_inspect_register(SP, s);
 
   // step 1
   expr->code(node, s);
@@ -1542,8 +1555,14 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
 
   emit_load(SELF, SELF_OBJECT_OFFSET, FP, s); // step 5
 
-  emit_shrink_stack(actual->len() + 1, s); // step 6
+  bool mainmain = node->current_method->name == main_meth && node->name == Main; // if we're in Main.main
+  if (!mainmain) {
+    emit_shrink_stack(actual->len() + 1, s); // step 6
+  } else {
+    emit_shrink_stack(actual->len(), s); // step 6
+  }
   
+  emit_inspect_register(SP, s);
   s << "# dispatch class end" << endl;
 }
 
