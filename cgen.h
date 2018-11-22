@@ -1,3 +1,4 @@
+#include<stdint.h>
 #include <map>
 #include <list>
 #include <vector>
@@ -17,6 +18,8 @@ typedef CgenClassTable *CgenClassTableP;
 
 class CgenNode;
 typedef CgenNode *CgenNodeP;
+
+class method_class;
 
 // Q. What is a class table?
 // Ans. It is a global table which stores each class
@@ -52,6 +55,7 @@ public:
    void emit_class_protobj();
    void dispatch_tables();
    void the_class_methods();
+   void runtime_type_check();
 
 // The following creates an inheritance graph from
 // a list of classes.  The graph is implemented as
@@ -86,6 +90,11 @@ public:
    std::vector<Symbol> dispatch_order; // dispatch order of functions of self
    int dispatch_offset;
 
+   SymbolTable<Symbol, int> *symbol_table = new SymbolTable<Symbol, int>;
+   int locals = 0;
+   method_class* current_method = NULL;
+   CgenClassTableP class_table;
+
 public:
    CgenNode(Class_ c,
             Basicness bstatus,
@@ -99,6 +108,11 @@ public:
    void assign_tag(int t) {assigned_tag = t;}
    void print_vector(CgenNodeP node);
    int get_method_offset(Symbol method);
+   int get_attribute_offset(Symbol attribute) {
+     // type casting ptrdiff to int here should be safe since we'll deal with a small number of attrs...
+     intptr_t pt = find(attr_list.begin(), attr_list.end(), attribute) - attr_list.begin();
+     return DEFAULT_OBJFIELDS + (int) pt;
+   }
    Symbol get_method_defining_class(Symbol method); 
    void print_dispatch_table(ostream& s, CgenNodeP original_node);
 };
