@@ -962,8 +962,10 @@ void CgenClassTable::initializers_code() {
       Feature f = features->nth(i);
       if(f->isattr()) {
         attr_class *attr = dynamic_cast<attr_class*>(f);
+        int offset = node->get_attribute_offset(attr->name);
         if(attr->init) { // it will never be null I guess, at most no expr which already produces nothing
           attr->init->code(node, str);
+          emit_store(ACC, offset, SELF, str);
         }
       }
     }
@@ -1449,7 +1451,7 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
 
   expr->code(node, s);
 
-  if (cgen_debug) cout << "checkpoint 1" << endl;
+  if (cgen_debug) cout << "checkpoint 2" << endl;
 
   int offset = node->get_method_offset(name);
   emit_load(T1, DISPTABLE_OFFSET, SELF, s);
@@ -1756,12 +1758,12 @@ void bool_const_class::code(CgenNodeP node, ostream& s)
 }
 
 void new__class::code(CgenNodeP node, ostream &s) {
-  // s << "# new class begin" << endl;
-  // s << LW; emit_protobj_ref(type_name, s); s << endl;
-  // s << JAL;
-  // emit_method_ref(Object, idtable.lookup_string("copy"), s);
-  // s << endl; // result is in $a0
-  // s << "# new class end" << endl;
+  cout << "# new class begin" << endl;
+  s << LA << ACC << "\t"; emit_protobj_ref(type_name, s); s << endl;
+  s << JAL; 
+  emit_method_ref(Object, idtable.lookup_string("copy"), s); 
+  s << endl; // result is in $a0
+  cout << "# new class end" << endl;
 }
 
 void isvoid_class::code(CgenNodeP node, ostream &s) {
@@ -1786,10 +1788,15 @@ void no_expr_class::code(CgenNodeP node, ostream &s) {
 }
 
 void object_class::code(CgenNodeP node, ostream &s) {
-  if (name != self) {
-    int *offset = node->symbol_table->probe(name);
-    emit_load(ACC, *offset, FP, s);
-  } else {
+  if (name == self) {
     emit_move(ACC, SELF, s);
+  } else {
+    if(node->symbol_table->lookup(name)) { // -1 means that identifier is an object field
+      int *offset = node->symbol_table->probe(name);
+      emit_store(ACC, *offset, FP, s); // store it in its stack position;
+    } else {
+      int offset = node->get_attribute_offset(name);  // we'll store it in SELF + get_attribute_offset
+      emit_store(ACC, offset, SELF, s); // store init in the object offset
+    }
   }
 }
