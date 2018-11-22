@@ -962,8 +962,10 @@ void CgenClassTable::initializers_code() {
       Feature f = features->nth(i);
       if(f->isattr()) {
         attr_class *attr = dynamic_cast<attr_class*>(f);
+        int offset = node->get_attribute_offset(attr->name);
         if(attr->init) { // it will never be null I guess, at most no expr which already produces nothing
           attr->init->code(node, str);
+          emit_store(ACC, offset, SELF, str);
         }
       }
     }
@@ -1751,12 +1753,14 @@ void bool_const_class::code(CgenNodeP node, ostream& s)
 }
 
 void new__class::code(CgenNodeP node, ostream &s) {
+  /*
   cout << "# new class begin" << endl;
-  s << LW; emit_protobj_ref(type_name, s); s << endl;
+  s << LA << ACC << "\t"; emit_protobj_ref(type_name, s); s << endl;
   s << JAL; 
   emit_method_ref(Object, idtable.lookup_string("copy"), s); 
   s << endl; // result is in $a0
   cout << "# new class end" << endl;
+  */
 }
 
 void isvoid_class::code(CgenNodeP node, ostream &s) {
