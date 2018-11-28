@@ -116,6 +116,7 @@ public:
    Symbol get_method_defining_class(Symbol method); 
    void print_dispatch_table(ostream& s, CgenNodeP original_node);
    int allocate_local(Symbol name); // returns offset as well as stores it in the symbol table
+   CgenNodeP probes(Symbol name); 
 };
 
 
