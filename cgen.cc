@@ -1526,7 +1526,7 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
    Symbol name;
    Expressions actual;
    */
-  int mdebug = 0;
+  int mdebug = 1;
 
   s << "# dispatch class begin" << endl;
   if(mdebug) emit_inspect_register(FP, s);
@@ -1539,6 +1539,7 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   if(mdebug) emit_inspect_register(SELF, s);
   // step 2
   emit_push(ACC, s);   
+  emit_move(S1, ACC, s); // store it in S1 since args will overwrite "ACC". TODO this will break if the expression itself is a function call. Either I implement callee-saves or I store expr as a temporary local and get an offset to it from FP.
   
   // step 3
   for (int i = actual->len() - 1; i >= 0 ; i--) {
@@ -1557,16 +1558,28 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
 
   // step 1 and 4
   int offset = node->probes(expr->get_type())->get_method_offset(name);
+  if (cgen_debug) cout << "Offset I'm reading is " << offset << endl;
+  if (cgen_debug && mdebug) {
+    emit_partial_load_address(T1, s); emit_method_ref(IO, out_string, s); s << endl;
+    emit_partial_load_address(T2, s); s << "\tDerived_dispTab" << endl;
+    emit_partial_load_address(T3, s); emit_method_ref(IO, out_int, s);    s << endl;
+    emit_inspect_register(T1, s);
+    emit_inspect_register(T2, s);
+    emit_inspect_register(T3, s);
+  }
 
-  emit_load(T1, DISPTABLE_OFFSET, ACC, s);
+  emit_load(T1, DISPTABLE_OFFSET, S1, s); // T1 should contain same thing as Base_dispTab
   emit_load(T2, offset, T1, s);
-  if(mdebug) emit_inspect_register(SELF, s); // TODO FIXME TODO FIXME the stack mysteriously shrinks by 4 b/w this inspection and the next
+  
+  if (mdebug) {
+    emit_inspect_register(T1, s);
+    emit_inspect_register(T2, s);
+    emit_inspect_register(SELF, s); // TODO FIXME TODO FIXME the stack mysteriously shrinks by 4 b/w this inspection and the next
+  }
 
   int before_arg_dup_label = LABEL_SEQ++; // we'll duplicate args when calling builtin out_string or out_int functions, since they pop the stack
   int after_arg_dup_label = LABEL_SEQ++; 
   int after_test_arg_dup_label = LABEL_SEQ++;
-  emit_partial_load_address(T1, s); emit_method_ref(IO, out_string, s); s << endl;
-  emit_partial_load_address(T3, s); emit_method_ref(IO, out_int, s);    s << endl;
   emit_branch(after_arg_dup_label, s);
   emit_label_def(before_arg_dup_label, s);
   emit_push(ACC, s); // ACC has the last inspected argument
