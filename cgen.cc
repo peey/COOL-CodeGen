@@ -384,30 +384,34 @@ static void emit_syscall(ostream &s) {
 }
 
 static void emit_characterwise_string_printer(std::string output, ostream& s) {
+  s << "\t# begin code to output debug message " << output << endl;
   if (cgen_debug) {
-    emit_move("$t7", ACC, s); // hoping no one uses temporary registers beyond T3. Use it to hold ACC's original value
+    s << "\t"; emit_move("$t7", ACC, s); // hoping no one uses temporary registers beyond T3. Use it to hold ACC's original value
     for (unsigned i = 0; i < output.length(); i++) {
-      emit_load_imm(ACC, output.at(i), s); // 10 is ascii for newline
-      emit_load_imm("$v0", 11, s); // syscall 4 is print string, but 11 is print char
-      emit_syscall(s);
+      s << "\t"; emit_load_imm(ACC, output.at(i), s); // 10 is ascii for newline
+      s << "\t"; emit_load_imm("$v0", 11, s); // syscall 4 is print string, but 11 is print char
+      s << "\t"; emit_syscall(s);
     }
-    emit_move(ACC, "$t7", s); // restore ACC's original value
+    s << "\t"; emit_move(ACC, "$t7", s); // restore ACC's original value
   }
+  s << "\t# end code to output debug message " << output << endl;
 }
 
 static void emit_inspect_register(char *reg,  ostream& s) {
   if (cgen_debug) { // cgen_debug because unlike just comments, this adds to the program output
-    s << "# begin code to inspect register " << reg << endl;
-    emit_move("$t7", ACC, s); // hoping no one uses temporary registers beyond T3. Use it to hold ACC's original value
-    emit_move(ACC, reg, s); // hoping no one uses temporary registers beyond T3
-    emit_load_imm("$v0", 1, s); // syscall 1 is print integer
-    emit_syscall(s);
+    emit_characterwise_string_printer(reg, s);
+    emit_characterwise_string_printer(": ", s);
+    s << "\t# begin code to inspect register " << reg << endl;
+    s << "\t"; emit_move("$t7", ACC, s); // hoping no one uses temporary registers beyond T3. Use it to hold ACC's original value
+    s << "\t"; emit_move(ACC, reg, s); // hoping no one uses temporary registers beyond T3
+    s << "\t"; emit_load_imm("$v0", 1, s); // syscall 1 is print integer
+    s << "\t"; emit_syscall(s);
     //newline
-    emit_load_imm(ACC, 10, s); // 10 is ascii for newline
-    emit_load_imm("$v0", 11, s); // syscall 4 is print string, but 11 is print char
-    emit_syscall(s);
-    emit_move(ACC, "$t7", s); // restore ACC's original value
-    s << "# end code to inspect register " << reg << endl;
+    s << "\t"; emit_load_imm(ACC, 10, s); // 10 is ascii for newline
+    s << "\t"; emit_load_imm("$v0", 11, s); // syscall 4 is print string, but 11 is print char
+    s << "\t"; emit_syscall(s);
+    s << "\t"; emit_move(ACC, "$t7", s); // restore ACC's original value
+    s << "\t# end code to inspect register " << reg << endl;
   }
 }
 
@@ -1253,82 +1257,7 @@ void CgenClassTable::emit_class_protobj(CgenNodeP node, int flag)
     }
 }
 
-// #define RETURN_ADDRESS_OFFSET   -0
-// #define SELF_OBJECT_OFFSET      -1
-// #define CONTROL_LINK_OFFSET     -2
-void method_code(CgenNodeP node, method_class *m, ostream &s) {
-  int mdebug = 1;
-
-  int arglen = m->formals->len(); // arglen + 1 below the stack pointer is stored the self object by the caller function
-
-  bool mainmain = m->name == main_meth && node->name == Main; // if we're in Main.main
-
-  emit_method_ref(node->name, m->name, s); s << LABEL;
-      //emit_inspect_register(SP, s);
-      s << "# preparing frame" << endl;
-      if (mdebug) emit_inspect_register(SP, s);
-      if (mdebug) emit_inspect_register(RA, s);
-      if (!mainmain) {// assume that for main, the correct value of self is already in the self object
-        if(cgen_debug) cout << "how many len?" << arglen << endl;
-        emit_load(SELF, arglen + 1, SP, s); 
-      }
-      if (mdebug) emit_inspect_register(SELF, s);
-      emit_push(RA, s); // first on frame pointer - return address
-      emit_push(SELF, s); // second on the frame pointer - self object
-      emit_push(FP, s); // lastly, old fp becomes control link
-      emit_addiu(FP, SP, +12, s); // now FP points to this method's frame
-      s << "# prepared frame" << endl;
-  if (cgen_debug) cout << "check 1" << endl;
-
-  if (mdebug) {
-    std::ostringstream dbg;
-    dbg << "executing " << node->name->get_string() << ":" << m->name->get_string() << endl;
-    emit_characterwise_string_printer(dbg.str() , s);
-  }
-
-  // copy all the arguments
-  for (int i = 0; i < arglen; i++) {
-    Formal f = m->formals->nth(i);
-    emit_load(ACC, i + 1, FP, s); // at 0 we have retrun pointer, but at +1 we have the first argument, at -2 the second and so on
-    s << JAL; emit_method_ref(Object, copy, s); s << endl; // copy the argument and store then push the copied arg on the stack
-    emit_push(ACC, s);
-  }
-  //if (mdebug) emit_inspect_register(SP, s);
-
-  // all copied args will be stored in $fp + ARGS_OFFSET + i
-
-  if (cgen_debug) cout << "check 2" << endl;
-
-  node->current_method = m; // useful for calculating the number of arguments when storing locals
-
-  if (cgen_debug) cout << "check 3 " << m->expr << endl;
-
-  m->expr->code(node, s); // whatever code runs, its return value will be in $a0, so we don't need to touch it 
-  if (cgen_debug) cout << "check 4" << endl;
-
-  emit_shrink_stack(arglen, s); // strip all copied args
-
-  s << "# unwinding frame" << endl;
-  emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s); // reset return address to stored one 
-  emit_load(FP, CONTROL_LINK_OFFSET, FP, s); // reset $fp to control link
-  emit_shrink_stack(3, s); // destroy stored value of self object, and remove control link, and return address from stack
-
-  /**
-    emit_load_imm(ACC, 0, s); 
-    emit_load_imm("$v0", 17, s);
-    emit_syscall(s);
-    **/
-    if (mdebug) emit_inspect_register(RA, s);
-    s << "# unwinded frame" << endl;
-
-    if (mdebug) {
-      std::ostringstream dbg;
-      dbg << "about to exit " << node->name->get_string() << ":" << m->name->get_string() << endl;
-      emit_characterwise_string_printer(dbg.str() , s);
-    }
-
-    emit_return(s); 
-}
+void method_code(CgenNodeP node, method_class *m, ostream &s);
 
 void CgenClassTable::the_class_methods() {
   for(List<CgenNode> *l = nds; l; l = l->tl()) {
@@ -1472,15 +1401,100 @@ int CgenNode::allocate_local(Symbol name) {
 //
 //*****************************************************************
 
+
+// #define RETURN_ADDRESS_OFFSET   -0
+// #define SELF_OBJECT_OFFSET      -1
+// #define CONTROL_LINK_OFFSET     -2
+void method_code(CgenNodeP node, method_class *m, ostream &s) {
+  int mdebug = 1; // controls if debug information is to be printed when the program runs. cgen_debug must also be set for it to work.
+
+  int arglen = m->formals->len(); // arglen + 1 below the stack pointer is stored the self object by the caller function
+
+  bool mainmain = m->name == main_meth && node->name == Main; // if we're in Main.main
+
+  emit_method_ref(node->name, m->name, s); s << LABEL;
+      s << "# preparing frame" << endl;
+
+      if (!mainmain) {// assume that for main, the correct value of self is already in the self object
+        emit_load(SELF, arglen + 1, SP, s); 
+      }
+
+      emit_push(RA, s); // first on frame pointer - return address
+      emit_push(SELF, s); // second on the frame pointer - self object
+      emit_push(FP, s); // lastly, old fp becomes control link
+      emit_addiu(FP, SP, +12, s); // now FP points to this method's frame
+      s << "# prepared frame" << endl;
+
+  if (cgen_debug) cout << "check 1" << endl;
+
+  if (mdebug) {
+    std::ostringstream dbg;
+    dbg << "executing " << node->name->get_string() << ":" << m->name->get_string() << "(" << arglen << ")" << endl;
+    emit_characterwise_string_printer(dbg.str() , s);
+    emit_inspect_register(SP, s);
+    emit_inspect_register(RA, s);
+    emit_inspect_register(SELF, s);
+    emit_inspect_register(FP, s);
+  }
+
+  // copy all the arguments
+  for (int i = 0; i < arglen; i++) {
+    Formal f = m->formals->nth(i);
+    emit_load(ACC, i + 1, FP, s); // at 0 we have retrun pointer, but at +1 (below the FP) we are provided with the first argument, at +2 the second and so on. 
+    s << JAL; emit_method_ref(Object, copy, s); s << endl; // copy the argument and store then push the copied arg on the stack
+    emit_push(ACC, s);
+  }
+
+  // all copied args will be stored in $fp + ARGS_OFFSET + i
+
+  node->current_method = m; // useful for calculating the number of arguments when storing locals
+
+  m->expr->code(node, s); // whatever code runs, its return value will be in $a0, so we don't need to touch it 
+
+  emit_shrink_stack(arglen, s); // strip all copied args
+
+  if (mdebug) {
+    std::ostringstream dbg;
+    dbg << "about to exit " << node->name->get_string() << ":" << m->name->get_string() << endl;
+    emit_characterwise_string_printer(dbg.str() , s);
+    emit_inspect_register(SP, s);
+    emit_inspect_register(RA, s);
+    emit_inspect_register(SELF, s);
+    emit_inspect_register(FP, s);
+  }
+
+  s << "# unwinding frame" << endl;
+  emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s); // reset return address to stored one 
+  emit_load(FP, CONTROL_LINK_OFFSET, FP, s); // reset $fp to control link
+  emit_shrink_stack(3, s); // destroy stored value of self object, and remove control link, and return address from stack
+  s << "# unwinded frame" << endl;
+
+  if (mdebug) {
+    std::ostringstream dbg;
+    dbg << "exiting " << node->name->get_string() << ":" << m->name->get_string() << endl;
+    emit_characterwise_string_printer(dbg.str() , s);
+    emit_inspect_register(SP, s);
+    emit_inspect_register(RA, s);
+    emit_inspect_register(SELF, s);
+    emit_inspect_register(FP, s);
+  }
+
+  emit_return(s); 
+}
+
 void object_class::code(CgenNodeP node, ostream &s) {
+  if (cgen_debug) cout << "looking up symbol " << name;
+
   if (name == self) {
     emit_move(ACC, SELF, s);
   } else {
     if(node->symbol_table->lookup(name)) { 
       int *offset = node->symbol_table->probe(name); // offset from FP is directly stored in the symbol table, so we don't need to do any more manipulations
+      if (cgen_debug) cout << ". it's a local variable at " << *offset << endl;
       emit_load(ACC, *offset, FP, s); 
     } else {
       int offset = node->get_attribute_offset(name);  // we'll load it from SELF + get_attribute_offset
+      if (cgen_debug) cout << ". it's a self attribute at " << offset << endl;
       emit_load(ACC, offset, SELF, s);
     }
   }
@@ -1564,15 +1578,20 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
    */
   int mdebug = 1;
 
+  Symbol type = expr->get_type(); type = type == SELF_TYPE? node->name : type;
+
   s << "# dispatch class begin" << endl;
-  if(mdebug) emit_inspect_register(FP, s);
-  if(mdebug) emit_inspect_register(SELF, s);
+  if(mdebug) {
+    std::ostringstream dbg;
+    dbg << "going to emit a dispatch (static type) " << type << ":" << name << "(" << actual->len() << ")" << endl;
+    emit_characterwise_string_printer(dbg.str() , s);
+    emit_inspect_register(SP, s);
+    emit_inspect_register(SELF, s);
+  }
 
   // step 1
   expr->code(node, s);
 
-  if(mdebug) emit_inspect_register(ACC, s);
-  if(mdebug) emit_inspect_register(SELF, s);
   // step 2
   emit_push(ACC, s);   
   emit_move(S1, ACC, s); // store it in S1 since args will overwrite "ACC". TODO this will break if the expression itself is a function call. Either I implement callee-saves or I store expr as a temporary local and get an offset to it from FP.
@@ -1593,25 +1612,14 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   //emit_addiu(T1, T2, offset*4, s); // T1 now has address to the function we need to call
 
   // step 1 and 4
-  int offset = node->probes(expr->get_type())->get_method_offset(name);
+  int offset = node->probes(type)->get_method_offset(name);
   if (cgen_debug) cout << "Offset I'm reading is " << offset << endl;
-  if (cgen_debug && mdebug) {
-    emit_partial_load_address(T1, s); emit_method_ref(IO, out_string, s); s << endl;
-    emit_partial_load_address(T2, s); s << "\tDerived_dispTab" << endl;
-    emit_partial_load_address(T3, s); emit_method_ref(IO, out_int, s);    s << endl;
-    emit_inspect_register(T1, s);
-    emit_inspect_register(T2, s);
-    emit_inspect_register(T3, s);
-  }
+  emit_partial_load_address(T1, s); emit_method_ref(IO, out_string, s); s << endl;
+  emit_partial_load_address(T3, s); emit_method_ref(IO, out_int, s);    s << endl;
 
   emit_load(T1, DISPTABLE_OFFSET, S1, s); // T1 should contain same thing as Base_dispTab
   emit_load(T2, offset, T1, s);
   
-  if (mdebug) {
-    emit_inspect_register(T1, s);
-    emit_inspect_register(T2, s);
-    emit_inspect_register(SELF, s); // TODO FIXME TODO FIXME the stack mysteriously shrinks by 4 b/w this inspection and the next
-  }
 
   int before_arg_dup_label = LABEL_SEQ++; // we'll duplicate args when calling builtin out_string or out_int functions, since they pop the stack
   int after_arg_dup_label = LABEL_SEQ++; 
@@ -1619,6 +1627,7 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   emit_branch(after_arg_dup_label, s);
   emit_label_def(before_arg_dup_label, s);
   emit_push(ACC, s); // ACC has the last inspected argument
+  emit_characterwise_string_printer("----> we're here" , s);
   emit_branch(after_test_arg_dup_label, s);
   emit_label_def(after_arg_dup_label, s);
   emit_beq(T2, T1, before_arg_dup_label, s);
@@ -1635,17 +1644,19 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   emit_inspect_register(T1, s); 
   */
 
-
   emit_jalr(T2, s);
 
   emit_load(SELF, SELF_OBJECT_OFFSET, FP, s); // step 5
   emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s); // step 5
 
-  if(mdebug) emit_inspect_register(FP, s);
-  if(mdebug) emit_inspect_register(SELF, s);
-
   emit_shrink_stack(actual->len() + 1, s); // step 6
-  if(mdebug) emit_inspect_register(SELF, s);
+  if(mdebug) {
+    std::ostringstream dbg;
+    dbg << "exiting dispatch (static type) " << type << ":" << name << "(" << actual->len() << ")" << endl;
+    emit_characterwise_string_printer(dbg.str() , s);
+    emit_inspect_register(SP, s);
+    emit_inspect_register(SELF, s);
+  }
   //emit_load_imm(S1, 0, s); // gobble the value of S1 so caller of the function we're in doesn't mistake it for out_string. TODO I'd implement a callee saving mechanism but too much work since S1 appears only in this corner case.
   s << "# dispatch class end" << endl;
 }
@@ -1753,7 +1764,7 @@ void block_class::code(CgenNodeP node, ostream &s) {
 
 void let_class::code(CgenNodeP node, ostream &s) {
   s << "# let class begin" << endl;
-  init->code(node, s);
+  init->code(node, s); // TODO what happens when let doesn't have an init?
   node->symbol_table->enterscope();
 
   // allocate space on stack for this identifier
@@ -1761,10 +1772,12 @@ void let_class::code(CgenNodeP node, ostream &s) {
   // store its offset from $fp
   int *offset = new int;
   *offset =  ARGS_OFFSET + -(node->current_method->formals->len() + node->locals++);
+  if (cgen_debug) cout << "Arg offset for let is calculated to be " << *offset << " and locals are " << node->locals << endl;
   node->symbol_table->addid(identifier, offset); // FIXME possible off-by-one error
   body->code(node, s); // return of the body is return of this, stays in $a0
   node->symbol_table->exitscope();
   emit_pop(ACC, s);
+  node->locals--;
   s << "# let class end" << endl;
 }
 
