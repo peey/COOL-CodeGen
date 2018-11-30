@@ -52,7 +52,6 @@ public:
    void rec_protObj(CgenNodeP, ostream&);
    CgenNodeP get_node_from_tag(int tag);
    void initializers_code();
-   void emit_class_protobj();
    void dispatch_tables();
    void the_class_methods();
    void runtime_type_check();
@@ -81,12 +80,12 @@ public:
    List<CgenNode> *children;                  // Children of class
    Basicness basic_status;                    // `Basic' if class is basic, `NotBasic' otherwise
 
-  // added 
+  // added
 
    int assigned_tag;
    std::vector<Symbol> attr_list;
    std::vector<Symbol> attr_type;
-   std::vector<Symbol> own_methods; 
+   std::vector<Symbol> own_methods;
    std::vector<Symbol> dispatch_order; // dispatch order of functions of self
    int dispatch_offset;
 
@@ -113,7 +112,7 @@ public:
      intptr_t pt = find(attr_list.begin(), attr_list.end(), attribute) - attr_list.begin();
      return DEFAULT_OBJFIELDS + (int) pt;
    }
-   Symbol get_method_defining_class(Symbol method); 
+   Symbol get_method_defining_class(Symbol method);
    void print_dispatch_table(ostream& s, CgenNodeP original_node);
    int allocate_local(Symbol name); // returns offset as well as stores it in the symbol table
    CgenNodeP probes(Symbol name); 

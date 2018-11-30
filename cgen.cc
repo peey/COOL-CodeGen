@@ -1401,6 +1401,19 @@ int CgenNode::allocate_local(Symbol name) {
 //
 //*****************************************************************
 
+void object_class::code(CgenNodeP node, ostream &s) {
+  if (name == self) {
+    emit_move(ACC, SELF, s);
+  } else {
+    if(node->symbol_table->lookup(name)) {
+      int *offset = node->symbol_table->probe(name); // offset from FP is directly stored in the symbol table, so we don't need to do any more manipulations
+      emit_load(ACC, *offset, FP, s);
+    } else {
+      int offset = node->get_attribute_offset(name);  // we'll load it from SELF + get_attribute_offset
+      emit_load(ACC, offset, SELF, s);
+    }
+  }
+}
 
 // #define RETURN_ADDRESS_OFFSET   -0
 // #define SELF_OBJECT_OFFSET      -1
@@ -1906,14 +1919,20 @@ void comp_class::code(CgenNodeP node, ostream &s) {
     s << "# comp_class begins" << endl;
 
     int false_branch = LABEL_SEQ++;
+    int end_branch = LABEL_SEQ++;
 
     e1->code(node, s);
     emit_move(T1, ACC, s);
     emit_load(T1, 3, T1, s);
-    emit_load_bool(ACC, truebool, s);
     emit_beqz(T1, false_branch, s);
     emit_load_bool(ACC, falsebool, s);
+    emit_branch(end_branch, s);
+
     emit_label_def(false_branch, s);
+    emit_load_bool(ACC, truebool, s);
+
+    emit_label_def(end_branch, s);
+
     s << "# comp_class ends" << endl;
 }
 
@@ -1938,14 +1957,27 @@ void bool_const_class::code(CgenNodeP node, ostream& s)
 void new__class::code(CgenNodeP node, ostream &s) {
   s << "# new class begin" << endl;
   s << LA << ACC << "\t"; emit_protobj_ref(type_name, s); s << endl;
-  s << JAL; 
-  emit_method_ref(Object, idtable.lookup_string("copy"), s); 
+  s << JAL;
+  emit_method_ref(Object, idtable.lookup_string("copy"), s);
   s << endl; // result is in $a0
   s << "# new class end" << endl;
 }
 
 void isvoid_class::code(CgenNodeP node, ostream &s) {
+    s << "# isvoid_class begins" << endl;
 
+    int void_branch = LABEL_SEQ++;
+    int end_branch = LABEL_SEQ++;
+
+    e1->code(node, s);
+    emit_beqz(ACC, void_branch, s);
+    emit_load_bool(ACC, falsebool, s);
+    emit_branch(end_branch, s);
+
+    emit_label_def(void_branch, s);
+    emit_load_bool(ACC, truebool, s);
+
+    emit_label_def(end_branch, s);
 }
 
 void no_expr_class::code(CgenNodeP node, ostream &s) {
