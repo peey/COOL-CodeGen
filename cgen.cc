@@ -1402,18 +1402,23 @@ int CgenNode::allocate_local(Symbol name) {
 //*****************************************************************
 
 void object_class::code(CgenNodeP node, ostream &s) {
+  if (cgen_debug) cout << "looking up symbol " << name;
+
   if (name == self) {
     emit_move(ACC, SELF, s);
   } else {
-    if(node->symbol_table->lookup(name)) {
+    if(node->symbol_table->lookup(name)) { 
       int *offset = node->symbol_table->probe(name); // offset from FP is directly stored in the symbol table, so we don't need to do any more manipulations
-      emit_load(ACC, *offset, FP, s);
+      if (cgen_debug) cout << ". it's a local variable at " << *offset << endl;
+      emit_load(ACC, *offset, FP, s); 
     } else {
       int offset = node->get_attribute_offset(name);  // we'll load it from SELF + get_attribute_offset
+      if (cgen_debug) cout << ". it's a self attribute at " << offset << endl;
       emit_load(ACC, offset, SELF, s);
     }
   }
 }
+
 
 // #define RETURN_ADDRESS_OFFSET   -0
 // #define SELF_OBJECT_OFFSET      -1
@@ -1493,24 +1498,6 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
   }
 
   emit_return(s); 
-}
-
-void object_class::code(CgenNodeP node, ostream &s) {
-  if (cgen_debug) cout << "looking up symbol " << name;
-
-  if (name == self) {
-    emit_move(ACC, SELF, s);
-  } else {
-    if(node->symbol_table->lookup(name)) { 
-      int *offset = node->symbol_table->probe(name); // offset from FP is directly stored in the symbol table, so we don't need to do any more manipulations
-      if (cgen_debug) cout << ". it's a local variable at " << *offset << endl;
-      emit_load(ACC, *offset, FP, s); 
-    } else {
-      int offset = node->get_attribute_offset(name);  // we'll load it from SELF + get_attribute_offset
-      if (cgen_debug) cout << ". it's a self attribute at " << offset << endl;
-      emit_load(ACC, offset, SELF, s);
-    }
-  }
 }
 
 void assign_class::code(CgenNodeP node, ostream &s) {
