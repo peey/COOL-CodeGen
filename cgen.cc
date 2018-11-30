@@ -30,6 +30,7 @@
 #include <queue>
 #include <stdlib.h>
 #include <string.h>
+#include <sstream>
 
 int LABEL_SEQ = 1000;
 
@@ -378,17 +379,33 @@ static void emit_gc_check(char *source, ostream &s)
   s << JAL << "_gc_check" << endl;
 }
 
+static void emit_syscall(ostream &s) {
+  s << "\tsyscall" << endl;
+}
+
+static void emit_characterwise_string_printer(std::string output, ostream& s) {
+  if (cgen_debug) {
+    emit_move("$t7", ACC, s); // hoping no one uses temporary registers beyond T3. Use it to hold ACC's original value
+    for (unsigned i = 0; i < output.length(); i++) {
+      emit_load_imm(ACC, output.at(i), s); // 10 is ascii for newline
+      emit_load_imm("$v0", 11, s); // syscall 4 is print string, but 11 is print char
+      emit_syscall(s);
+    }
+    emit_move(ACC, "$t7", s); // restore ACC's original value
+  }
+}
+
 static void emit_inspect_register(char *reg,  ostream& s) {
   if (cgen_debug) { // cgen_debug because unlike just comments, this adds to the program output
     s << "# begin code to inspect register " << reg << endl;
     emit_move("$t7", ACC, s); // hoping no one uses temporary registers beyond T3. Use it to hold ACC's original value
     emit_move(ACC, reg, s); // hoping no one uses temporary registers beyond T3
     emit_load_imm("$v0", 1, s); // syscall 1 is print integer
-    s << "\tsyscall" << endl;
+    emit_syscall(s);
     //newline
     emit_load_imm(ACC, 10, s); // 10 is ascii for newline
     emit_load_imm("$v0", 11, s); // syscall 4 is print string, but 11 is print char
-    s << "\tsyscall" << endl;
+    emit_syscall(s);
     emit_move(ACC, "$t7", s); // restore ACC's original value
     s << "# end code to inspect register " << reg << endl;
   }
@@ -1263,6 +1280,12 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
       s << "# prepared frame" << endl;
   if (cgen_debug) cout << "check 1" << endl;
 
+  if (mdebug) {
+    std::ostringstream dbg;
+    dbg << "executing " << node->name->get_string() << ":" << m->name->get_string() << endl;
+    emit_characterwise_string_printer(dbg.str() , s);
+  }
+
   // copy all the arguments
   for (int i = 0; i < arglen; i++) {
     Formal f = m->formals->nth(i);
@@ -1289,9 +1312,22 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
   emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s); // reset return address to stored one 
   emit_load(FP, CONTROL_LINK_OFFSET, FP, s); // reset $fp to control link
   emit_shrink_stack(3, s); // destroy stored value of self object, and remove control link, and return address from stack
-  if (mdebug) emit_inspect_register(RA, s);
-  s << "# unwinded frame" << endl;
-  emit_return(s); 
+
+  /**
+    emit_load_imm(ACC, 0, s); 
+    emit_load_imm("$v0", 17, s);
+    emit_syscall(s);
+    **/
+    if (mdebug) emit_inspect_register(RA, s);
+    s << "# unwinded frame" << endl;
+
+    if (mdebug) {
+      std::ostringstream dbg;
+      dbg << "about to exit " << node->name->get_string() << ":" << m->name->get_string() << endl;
+      emit_characterwise_string_printer(dbg.str() , s);
+    }
+
+    emit_return(s); 
 }
 
 void CgenClassTable::the_class_methods() {
