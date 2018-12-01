@@ -993,8 +993,8 @@ void CgenClassTable::initializers_code() {
   emit_return(str);
 
   // String_init start
-  emit_init_ref(Str, str); str << LABEL;
-  emit_return(str);
+  //emit_init_ref(Str, str); str << LABEL;
+  //emit_return(str);
 
   // IO_init start
   //emit_init_ref(IO, str); str << LABEL; // we get the object in $a0 or ACC. Assuming that it may have garbage values and wasn't 0'd out.
@@ -1004,7 +1004,7 @@ void CgenClassTable::initializers_code() {
   for(List<CgenNode> *l = nds; l; l = l->tl()) {
 	CgenNodeP node = l->hd();
 
-	if (node->name == Object || node->name == Int || node->name == Bool || node->name == Str) continue; // TODO optimize
+	if (node->name == Object || node->name == Int || node->name == Bool) continue; // TODO optimize
 
 	emit_init_ref(node->name, str); str << LABEL;
 
@@ -1226,7 +1226,8 @@ void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
                     << WORD << 5 << endl
                     << WORD ; emit_disptable_ref(s, str); str << endl;
                 str << WORD ; emit_protobj_ref(Int, str); str << endl;
-                str << WORD << 0 << endl;
+                str << BYTE << 0 << endl;
+                str << ALIGN;
             }
         }
     }
@@ -1616,6 +1617,7 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
 
   s << "# static dispatch class begin" << endl;
 
+
   // step 1
   expr->code(node, s);
 
@@ -1657,6 +1659,7 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
 
   Symbol type = expr->get_type(); type = type == SELF_TYPE? node->name : type;
 
+
   s << "# dispatch class begin" << endl;
   if(mdebug) {
     std::ostringstream dbg;
@@ -1673,6 +1676,26 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   // step 2
   emit_push(ACC, s);
   emit_move(S1, ACC, s); // store it in S1 since args will overwrite "ACC", but we need it for dispatable. TODO this will break if the expression itself is a function call. Either I implement callee-saves or I store expr as a temporary local and get an offset to it from FP.
+  
+  if (type == Str) { // each of the functions have a special way to call them which doesn't folow our calling convention
+    if (cgen_debug) cout << "||||||||||||||||Dispatch to string functions " << endl;
+    if (name == concat) {
+      actual->nth(0)->code(node, s); // first arg to concat
+      emit_push(ACC, s);
+      emit_move(ACC, S1, s);
+      s << JAL << "String.concat" << endl;
+    } else if (name == length) {
+      s << JAL << "String.length" << endl;
+    } else if (name == substr) {
+      actual->nth(0)->code(node, s); // first arg to concat
+      emit_push(ACC, s);
+      actual->nth(1)->code(node, s); // first arg to concat
+      emit_push(ACC, s);
+      emit_move(ACC, S1, s);
+      s << JAL << "String.substr" << endl;
+    }
+    return;
+  }
 
   // step 3
   for (int i = 0; i < actual->len() ; i++) {
@@ -1713,13 +1736,16 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   int after_arg_dup_label = LABEL_SEQ++;
   int after_test_arg_dup_label = LABEL_SEQ++;
   emit_branch(after_arg_dup_label, s);
+
   emit_label_def(before_arg_dup_label, s);
-  emit_characterwise_string_printer("-------> " , s);
-  emit_push(ACC, s); // ACC has the last inspected argument
-  emit_branch(after_test_arg_dup_label, s);
+      emit_characterwise_string_printer("-------> " , s);
+      emit_push(ACC, s); // ACC has the last inspected argument
+      emit_branch(after_test_arg_dup_label, s);
+
   emit_label_def(after_arg_dup_label, s);
-  emit_beq(T2, T1, before_arg_dup_label, s);
-  emit_beq(T2, T3, before_arg_dup_label, s);
+      emit_beq(T2, T1, before_arg_dup_label, s);
+      emit_beq(T2, T3, before_arg_dup_label, s);
+
   emit_label_def(after_test_arg_dup_label, s);
 
   /*
@@ -1753,11 +1779,15 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
 void cond_class::code(CgenNodeP node, ostream &s) {
     s << "# cond_class begins" << endl;
 
+    if (cgen_debug) cout << "control reaches here 2.5" << pred << endl;
+
     int fbranch = LABEL_SEQ++;
     int tbranch = LABEL_SEQ++;
     int ebranch = LABEL_SEQ++;
 
     pred->code(node, s);    // stores 1 in $a0 if true, otherwise stores 0
+    if (cgen_debug) cout << "control reaches here 3" << endl;
+
     emit_load(ACC, 3, ACC, s);
     emit_bne(ACC, ZERO, tbranch, s);
 
@@ -1772,6 +1802,7 @@ void cond_class::code(CgenNodeP node, ostream &s) {
 
     s << "# if_end" << endl;
     emit_label_def(ebranch, s);     // if_end (fi)
+    if (cgen_debug) cout << "control reaches here 3" << endl;
 }
 
 void loop_class::code(CgenNodeP node, ostream &s) {
@@ -1863,7 +1894,9 @@ void let_class::code(CgenNodeP node, ostream &s) {
 
   if(mdebug) emit_inspect_register(ACC, s);
 
+
   init->code(node, s); // TODO what happens when let doesn't have an init?
+
 
   if(mdebug) emit_inspect_register(ACC, s);
 
@@ -1892,6 +1925,7 @@ void let_class::code(CgenNodeP node, ostream &s) {
   emit_pop(ACC, s);
   node->locals--;
   s << "# let class end" << endl;
+
 }
 
 void plus_class::code(CgenNodeP node, ostream &s) {
@@ -2060,6 +2094,7 @@ void leq_class::code(CgenNodeP node, ostream &s) {
 void comp_class::code(CgenNodeP node, ostream &s) {
     s << "# comp_class begins" << endl;
 
+
     int false_branch = LABEL_SEQ++;
     int end_branch = LABEL_SEQ++;
 
@@ -2088,7 +2123,9 @@ void int_const_class::code(CgenNodeP node, ostream& s)
 
 void string_const_class::code(CgenNodeP node, ostream& s)
 {
+  if (cgen_debug) cout << "string const enter" << endl;
   emit_load_string(ACC,stringtable.lookup_string(token->get_string()),s);
+  if (cgen_debug) cout << "string const exit" << endl;
 }
 
 void bool_const_class::code(CgenNodeP node, ostream& s)

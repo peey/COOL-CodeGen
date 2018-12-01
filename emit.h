@@ -59,6 +59,7 @@
 #define BOOL_SLOTS        1
 
 #define GLOBAL        "\t.globl\t"
+#define BYTE          "\t.byte\t"
 #define ALIGN         "\t.align\t2\n"
 #define WORD          "\t.word\t"
 
