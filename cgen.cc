@@ -1407,10 +1407,10 @@ void object_class::code(CgenNodeP node, ostream &s) {
   if (name == self) {
     emit_move(ACC, SELF, s);
   } else {
-    if(node->symbol_table->lookup(name)) { 
+    if(node->symbol_table->lookup(name)) {
       int *offset = node->symbol_table->probe(name); // offset from FP is directly stored in the symbol table, so we don't need to do any more manipulations
       if (cgen_debug) cout << ". it's a local variable at " << *offset << endl;
-      emit_load(ACC, *offset, FP, s); 
+      emit_load(ACC, *offset, FP, s);
     } else {
       int offset = node->get_attribute_offset(name);  // we'll load it from SELF + get_attribute_offset
       if (cgen_debug) cout << ". it's a self attribute at " << offset << endl;
@@ -1434,7 +1434,7 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
       s << "# preparing frame" << endl;
 
       if (!mainmain) {// assume that for main, the correct value of self is already in the self object
-        emit_load(SELF, arglen + 1, SP, s); 
+        emit_load(SELF, arglen + 1, SP, s);
       }
 
       emit_push(RA, s); // first on frame pointer - return address
@@ -1458,7 +1458,7 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
   // copy all the arguments
   for (int i = 0; i < arglen; i++) {
     Formal f = m->formals->nth(i);
-    emit_load(ACC, i + 1, FP, s); // at 0 we have retrun pointer, but at +1 (below the FP) we are provided with the first argument, at +2 the second and so on. 
+    emit_load(ACC, i + 1, FP, s); // at 0 we have retrun pointer, but at +1 (below the FP) we are provided with the first argument, at +2 the second and so on.
     s << JAL; emit_method_ref(Object, copy, s); s << endl; // copy the argument and store then push the copied arg on the stack
     emit_push(ACC, s);
   }
@@ -1467,7 +1467,7 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
 
   node->current_method = m; // useful for calculating the number of arguments when storing locals
 
-  m->expr->code(node, s); // whatever code runs, its return value will be in $a0, so we don't need to touch it 
+  m->expr->code(node, s); // whatever code runs, its return value will be in $a0, so we don't need to touch it
 
   emit_shrink_stack(arglen, s); // strip all copied args
 
@@ -1482,7 +1482,7 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
   }
 
   s << "# unwinding frame" << endl;
-  emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s); // reset return address to stored one 
+  emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s); // reset return address to stored one
   emit_load(FP, CONTROL_LINK_OFFSET, FP, s); // reset $fp to control link
   emit_shrink_stack(3, s); // destroy stored value of self object, and remove control link, and return address from stack
   s << "# unwinded frame" << endl;
@@ -1497,7 +1497,7 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
     emit_inspect_register(FP, s);
   }
 
-  emit_return(s); 
+  emit_return(s);
 }
 
 void assign_class::code(CgenNodeP node, ostream &s) {
@@ -1522,7 +1522,7 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
    Expressions actual;
    */
 
-  /** 
+  /**
    * For both dispatch and static dispatch, steps are
    * 1. Get reference to the function
    * 2. Push self object for the next function on stack
@@ -1532,7 +1532,7 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
    * 6. Restore our stack by tearing down args + expression
    * Assumption: no premature returns in COOL
    *
-   * Why does callee need to save self object and we need to do step 2? 
+   * Why does callee need to save self object and we need to do step 2?
    * There's no other clean way to do it. Any of the temp regs may be overwritten by the init expressions
    * */
 
@@ -1543,8 +1543,8 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
   expr->code(node, s);
 
   // step 2
-  emit_push(ACC, s);   
-  
+  emit_push(ACC, s);
+
   // step 3
   for (int i = actual->len() - 1; i >= 0 ; i--) {
     Expression arg = actual->nth(i);
@@ -1593,9 +1593,9 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   expr->code(node, s);
 
   // step 2
-  emit_push(ACC, s);   
+  emit_push(ACC, s);
   emit_move(S1, ACC, s); // store it in S1 since args will overwrite "ACC". TODO this will break if the expression itself is a function call. Either I implement callee-saves or I store expr as a temporary local and get an offset to it from FP.
-  
+
   // step 3
   for (int i = actual->len() - 1; i >= 0 ; i--) {
     Expression arg = actual->nth(i);
@@ -1619,10 +1619,10 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
 
   emit_load(T1, DISPTABLE_OFFSET, S1, s); // T1 should contain same thing as Base_dispTab
   emit_load(T2, offset, T1, s);
-  
+
 
   int before_arg_dup_label = LABEL_SEQ++; // we'll duplicate args when calling builtin out_string or out_int functions, since they pop the stack
-  int after_arg_dup_label = LABEL_SEQ++; 
+  int after_arg_dup_label = LABEL_SEQ++;
   int after_test_arg_dup_label = LABEL_SEQ++;
   emit_branch(after_arg_dup_label, s);
   emit_label_def(before_arg_dup_label, s);
@@ -1635,13 +1635,13 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   emit_label_def(after_test_arg_dup_label, s);
 
   /*
-  emit_inspect_register(T2, s); 
+  emit_inspect_register(T2, s);
   emit_partial_load_address(T1, s); s << "Base.identify" << endl;
-  emit_inspect_register(T1, s); 
+  emit_inspect_register(T1, s);
   emit_load(T1, 0, T1, s);
-  emit_inspect_register(T1, s); 
+  emit_inspect_register(T1, s);
   emit_load(T1, 0, T2, s);
-  emit_inspect_register(T1, s); 
+  emit_inspect_register(T1, s);
   */
 
   emit_jalr(T2, s);
@@ -1737,13 +1737,13 @@ void typcase_class::code(CgenNodeP node, ostream &s) {
     emit_label_def(next_case_label, s);
   }
 
-  
+
   emit_shrink_stack(s); // remove local from stack even if we're going to error
   emit_jal("_case_abort", s); // last case is that we emit runtime error, case abort 1
 
   emit_label_def(all_branches_end_label, s); // successful case matches end here to prevent fallthrough
   emit_shrink_stack(s); // remove local from stack. We don't need to touch ACC since case's evaluation has set it to the right value
-  
+
   node->locals--; // the stack space from $fp is freed up for more locals if need be
   s << "# typecase class end" << endl;
 }
