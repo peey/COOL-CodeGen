@@ -441,24 +441,6 @@ static void emit_inspect_mem(int offset, char *reg,  ostream& s) {
     s << "\t# end code to inspect register " << reg << endl;
   }
 }
-// STACK MANAGEMENT, used for initializers
-void emit_stack_entry_bookkeeping(ostream& s) {
-  // based on how coolc manages stack
-  emit_addiu(SP, SP, -12, s);
-  emit_store(FP, 3, SP, s);
-  emit_store(SELF, 2, SP, s);
-  emit_store(RA, 1, SP, s);
-  emit_addiu(FP, SP, 4, s); // frame is now pointing to where we stored the FP on stack
-  //TODO use a calling convention. That would add more bookeeping I suppose
-}
-
-void emit_stack_exit_bookkeeping(ostream& s) {
-  emit_load(FP, 3, SP, s);
-  emit_load(SELF, 2, SP, s);
-  emit_load(RA, 1, SP, s);
-  emit_addiu(SP, SP, 12, s);
-  emit_return(s);
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -1007,6 +989,7 @@ void CgenClassTable::initializers_code() {
 
   // Bool_init start
   emit_init_ref(Bool, str); str << LABEL;
+  emit_store(ZERO, DEFAULT_OBJFIELDS, ACC, str);
   emit_return(str);
 
   // String_init start
@@ -1014,19 +997,27 @@ void CgenClassTable::initializers_code() {
   emit_return(str);
 
   // IO_init start
-  emit_init_ref(IO, str); str << LABEL; // we get the object in $a0 or ACC. Assuming that it may have garbage values and wasn't 0'd out.
-  emit_return(str);
+  //emit_init_ref(IO, str); str << LABEL; // we get the object in $a0 or ACC. Assuming that it may have garbage values and wasn't 0'd out.
+  //emit_return(str);
 
   // for any other classes
   for(List<CgenNode> *l = nds; l; l = l->tl()) {
 	CgenNodeP node = l->hd();
 
-	if (node->name == Object || node->name == Int || node->name == Bool || node->name == Str || node->name == IO) continue; // TODO optimize
+	if (node->name == Object || node->name == Int || node->name == Bool || node->name == Str) continue; // TODO optimize
 
 	emit_init_ref(node->name, str); str << LABEL;
-	emit_stack_entry_bookkeeping(str);
+
+    str << "# preparing init frame" << endl;
+	emit_move(SELF, ACC, str); // destination, source.
+    emit_push(RA, str); // first on frame pointer - return address
+    emit_push(SELF, str); // second on the frame pointer - self object
+    emit_push(FP, str); // lastly, old fp becomes control link
+    emit_addiu(FP, SP, +12, str); // now FP points to this method's frame
+    str << "# prepared init frame" << endl;
+
 	// init's calling convention: object being initialized will always be passed in $a0
-	emit_move(SELF, ACC, str); // destination, source. TODO why is this needed? because the initialization code may need to refer to self?
+    // call parent's init method
 	str << JAL; emit_init_ref(node->parent, str); str << endl;
 
     Features features = node->features;
@@ -1035,15 +1026,32 @@ void CgenClassTable::initializers_code() {
       if(f->isattr()) {
         attr_class *attr = dynamic_cast<attr_class*>(f);
         int offset = node->get_attribute_offset(attr->name);
-        if(attr->init) { // it will never be null I guess, at most no expr which already produces nothing
+        if(!attr->init->is_no_expr()) {
+          if (cgen_debug) cout << "non default init " << endl;
           attr->init->code(node, str);
           emit_store(ACC, offset, SELF, str);
+        } else if(attr->type_decl == Int || attr->type_decl == Str || attr->type_decl == Bool) { // we have default initializations for these, see 5.1
+          if (cgen_debug) cout << "default init of primitive types" << endl;
+          // NOTE: KEEP IN SYNC WITH new__class::code
+          str << LA << ACC << "\t"; emit_protobj_ref(attr->type_decl, str); str << endl;
+          str << JAL; emit_method_ref(Object, copy, str); str << endl; // result is in $a0
+          str << JAL; emit_init_ref(attr->type_decl, str); str << endl; // initialize the copied object
+        } else {
+          if (cgen_debug) cout << "default init (void)" << endl;
+          // store void for anything else unless initialized. Again, 5.1
+          emit_store(ZERO, offset, SELF, str);
         }
       }
     }
 
 	emit_move(ACC, SELF, str); // Q: why is this needed?? ACC usually contains "return value" which I don't think has significance here. Anyways, why are we modifying it? Ans. because we want to return "SELF" from new
-	emit_stack_exit_bookkeeping(str);
+
+    str << "# unwinding init frame" << endl;
+    emit_load(RA, RETURN_ADDRESS_OFFSET, FP, str); // reset return address to stored one
+    emit_load(FP, CONTROL_LINK_OFFSET, FP, str); // reset $fp to control link
+    emit_shrink_stack(3, str); // destroy stored value of self object, and remove control link, and return address from stack
+    str << "# unwinded init frame" << endl;
+    emit_return(str);
   }
 }
 
@@ -1201,7 +1209,7 @@ void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
                     << WORD << node->assigned_tag << endl
                     << WORD << 4 << endl
                     << WORD ; emit_disptable_ref(s, str); str << endl;
-                str << WORD ; emit_protobj_ref(s, str); str << endl;
+                str << WORD << 0 << endl;
             }
             else if(s == Bool)
             {
@@ -1209,7 +1217,7 @@ void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
                     << WORD << node->assigned_tag << endl
                     << WORD << 4 << endl
                     << WORD ; emit_disptable_ref(s, str); str << endl;
-                str << WORD ; emit_protobj_ref(s, str); str << endl;
+                str << WORD << 0 << endl;
             }
             else if(s == Str)
             {
@@ -1218,7 +1226,7 @@ void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
                     << WORD << 5 << endl
                     << WORD ; emit_disptable_ref(s, str); str << endl;
                 str << WORD ; emit_protobj_ref(Int, str); str << endl;
-                str << WORD ; emit_protobj_ref(Str, str); str << endl;
+                str << WORD << 0 << endl;
             }
         }
     }
@@ -1436,6 +1444,8 @@ int CgenNode::allocate_param(Symbol name, int pos) {
 //*****************************************************************
 
 void object_class::code(CgenNodeP node, ostream &s) {
+  int mdebug = 1;
+
   if (cgen_debug) cout << "looking up symbol " << name;
 
   if (name == self) {
@@ -1495,12 +1505,13 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
   // copy all the arguments
   for (int i = 0; i < arglen; i++) {
     formal_class *f = dynamic_cast<formal_class*>(m->formals->nth(i));
-    emit_load(ACC, i + 1, FP, s); // at 0 we have retrun pointer, but at +1 (below the FP) we are provided with the first argument, at +2 the second and so on.
+    // at 0 we have retrun pointer, but at +1 (below the FP) we are provided with the last argument, at +2 the second last and so on.
+    emit_load(ACC, arglen - i, FP, s); // arglen - i goes from arglen (first arg) to 1 (last arg)
     //TODO: is any temporary live? I think not
     s << JAL; emit_method_ref(Object, copy, s); s << endl; // copy the argument and store then push the copied arg on the stack
     int offset = node->allocate_param(f->name, i); // allocate sequentially
     emit_push(ACC, s);
-    if (mdebug) {
+    if (false && mdebug) {
         std::ostringstream dbg;
       dbg << "copying passed argument " << i << endl;
       emit_characterwise_string_printer(dbg.str() , s);
@@ -1560,20 +1571,22 @@ void assign_class::code(CgenNodeP node, ostream &s) {
   expr->code(node, s); // rhs is evaluated and resulting value will be in ACC
   if(node->symbol_table->lookup(name)) {
     int *offset = node->symbol_table->probe(name);
+    emit_store(ACC, *offset, FP, s); // store it in its stack position;
     if (mdebug) {
       std::ostringstream dbg;
       dbg << "which is a local at offset  " << *offset << endl;
       emit_characterwise_string_printer(dbg.str() , s);
+      emit_load("$t6", *offset, FP, s);
+      emit_inspect_mem(3, "$t6", s);
     }
-    emit_store(ACC, *offset, FP, s); // store it in its stack position;
   } else {
     int offset = node->get_attribute_offset(name);  // we'll store it in SELF + get_attribute_offset
+    emit_store(ACC, offset, SELF, s); // store init in the object offset
     if (mdebug) {
       std::ostringstream dbg;
       dbg << "which is a field at offset  " << offset << endl;
       emit_characterwise_string_printer(dbg.str() , s);
     }
-    emit_store(ACC, offset, SELF, s); // store init in the object offset
   }
   s << "# assign class end" << endl;
 }
@@ -1610,7 +1623,7 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
   emit_push(ACC, s);
 
   // step 3
-  for (int i = actual->len() - 1; i >= 0 ; i--) {
+  for (int i = 0; i < actual->len() ; i++) { // evaluate arguments in order
     Expression arg = actual->nth(i);
     arg->code(node, s);
     emit_push(ACC, s);
@@ -1650,6 +1663,7 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
     dbg << "going to emit a dispatch (static type) " << type << ":" << name << "(" << actual->len() << ")" << endl;
     emit_characterwise_string_printer(dbg.str() , s);
     emit_inspect_register(SP, s);
+    emit_inspect_register(FP, s);
     emit_inspect_register(SELF, s);
   }
 
@@ -1657,15 +1671,16 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   expr->code(node, s);
 
   // step 2
-  emit_push(ACC, s);   
+  emit_push(ACC, s);
   emit_move(S1, ACC, s); // store it in S1 since args will overwrite "ACC", but we need it for dispatable. TODO this will break if the expression itself is a function call. Either I implement callee-saves or I store expr as a temporary local and get an offset to it from FP.
 
   // step 3
-  for (int i = actual->len() - 1; i >= 0 ; i--) {
+  for (int i = 0; i < actual->len() ; i++) {
     Expression arg = actual->nth(i);
     arg->code(node, s);
     emit_push(ACC, s);
-    if(mdebug) {
+
+    if(false && mdebug) {
       std::ostringstream dbg;
       dbg << "\tsetting up arguments for dispatch. arg " << i << ": \n";
       emit_characterwise_string_printer(dbg.str() , s);
@@ -1728,6 +1743,7 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
     dbg << "exiting dispatch (static type) " << type << ":" << name << "(" << actual->len() << ")" << endl;
     emit_characterwise_string_printer(dbg.str() , s);
     emit_inspect_register(SP, s);
+    emit_inspect_register(FP, s);
     emit_inspect_register(SELF, s);
   }
   //emit_load_imm(S1, 0, s); // gobble the value of S1 so caller of the function we're in doesn't mistake it for out_string. TODO I'd implement a callee saving mechanism but too much work since S1 appears only in this corner case.
@@ -1879,41 +1895,83 @@ void let_class::code(CgenNodeP node, ostream &s) {
 }
 
 void plus_class::code(CgenNodeP node, ostream &s) {
-  s << "# plus class begin" << endl;
-  e1->code(node, s);
-  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
-  e2->code(node, s);
-  emit_load(T1, 1, SP, s); // load e2's return value in t1
-  emit_add(ACC, T1, ACC, s); // return expression's value in $a0
-  emit_shrink_stack(s); // TODO possilby simplify code by defining a pop_stack and this could be interchanged with previous instruction
-  s << "# plus class end" << endl;
+    s << "# plus_class begin" << endl;
+
+    e1->code(node, s);
+    emit_push(ACC, s);
+    e2->code(node, s);
+    emit_push(ACC, s);
+    emit_load(ACC, 2, SP, s);
+    emit_jal("Object.copy", s);
+    emit_load(T1, 2, SP, s);
+    emit_load(T1, 3, T1, s);
+    emit_load(T2, 1, SP, s);
+    emit_load(T2, 3, T2, s);
+    emit_add(T1, T1, T2, s);
+    emit_store(T1, 3, ACC, s);
+    emit_shrink_stack(2, s);
+
+    s << "# plus_class end" << endl;
 }
 
 void sub_class::code(CgenNodeP node, ostream &s) {
-  e1->code(node, s);
-  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
-  e2->code(node, s);
-  emit_load(T1, 1, SP, s); // load e2's return value in t1
-  emit_sub(ACC, T1, ACC, s); // return expression's value in $a0
-  emit_shrink_stack(s);
+    s << "# sub_class begin" << endl;
+
+    e1->code(node, s);
+    emit_push(ACC, s);
+    e2->code(node, s);
+    emit_push(ACC, s);
+    emit_load(ACC, 2, SP, s);
+    emit_jal("Object.copy", s);
+    emit_load(T1, 2, SP, s);
+    emit_load(T1, 3, T1, s);
+    emit_load(T2, 1, SP, s);
+    emit_load(T2, 3, T2, s);
+    emit_sub(T1, T1, T2, s);
+    emit_store(T1, 3, ACC, s);
+    emit_shrink_stack(2, s);
+
+    s << "# sub_class end" << endl;
 }
 
 void mul_class::code(CgenNodeP node, ostream &s) {
-  e1->code(node, s);
-  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
-  e2->code(node, s);
-  emit_load(T1, 1, SP, s); // load e2's return value in t1
-  emit_mul(ACC, T1, ACC, s); // return expression's value in $a0
-  emit_shrink_stack(s);
+    s << "# mul_class begin" << endl;
+
+    e1->code(node, s);
+    emit_push(ACC, s);
+    e2->code(node, s);
+    emit_push(ACC, s);
+    emit_load(ACC, 2, SP, s);
+    emit_jal("Object.copy", s);
+    emit_load(T1, 2, SP, s);
+    emit_load(T1, 3, T1, s);
+    emit_load(T2, 1, SP, s);
+    emit_load(T2, 3, T2, s);
+    emit_mul(T1, T1, T2, s);
+    emit_store(T1, 3, ACC, s);
+    emit_shrink_stack(2, s);
+
+    s << "# mul_class end" << endl;
 }
 
 void divide_class::code(CgenNodeP node, ostream &s) {
-  e1->code(node, s);
-  emit_push(ACC, s); // e1's return value is in $a0 and caller has the responsibility of storing it on the stack
-  e2->code(node, s);
-  emit_load(T1, 1, SP, s); // load e2's return value in t1
-  emit_div(ACC, T1, ACC, s); // return expression's value in $a0
-  emit_shrink_stack(s);
+    s << "# div_class begin" << endl;
+
+    e1->code(node, s);
+    emit_push(ACC, s);
+    e2->code(node, s);
+    emit_push(ACC, s);
+    emit_load(ACC, 2, SP, s);
+    emit_jal("Object.copy", s);
+    emit_load(T1, 2, SP, s);
+    emit_load(T1, 3, T1, s);
+    emit_load(T2, 1, SP, s);
+    emit_load(T2, 3, T2, s);
+    emit_div(T1, T1, T2, s);
+    emit_store(T1, 3, ACC, s);
+    emit_shrink_stack(2, s);
+
+    s << "# div_class end" << endl;
 }
 
 void neg_class::code(CgenNodeP node, ostream &s) {
@@ -2041,9 +2099,8 @@ void bool_const_class::code(CgenNodeP node, ostream& s)
 void new__class::code(CgenNodeP node, ostream &s) {
   s << "# new class begin" << endl;
   s << LA << ACC << "\t"; emit_protobj_ref(type_name, s); s << endl;
-  s << JAL;
-  emit_method_ref(Object, idtable.lookup_string("copy"), s);
-  s << endl; // result is in $a0
+  s << JAL; emit_method_ref(Object, idtable.lookup_string("copy"), s); s << endl; // result is in $a0
+  s << JAL; emit_init_ref(type_name, s); // initialize the copied object
   s << "# new class end" << endl;
 }
 
