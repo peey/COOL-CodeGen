@@ -397,13 +397,40 @@ static void emit_characterwise_string_printer(std::string output, ostream& s) {
   s << "\t# end code to output debug message " << output << endl;
 }
 
-static void emit_inspect_register(char *reg,  ostream& s) {
+static void emit_inspect_register(char *reg,  bool newline, ostream& s) {
   if (cgen_debug) { // cgen_debug because unlike just comments, this adds to the program output
     emit_characterwise_string_printer(reg, s);
     emit_characterwise_string_printer(": ", s);
     s << "\t# begin code to inspect register " << reg << endl;
     s << "\t"; emit_move("$t7", ACC, s); // hoping no one uses temporary registers beyond T3. Use it to hold ACC's original value
     s << "\t"; emit_move(ACC, reg, s); // hoping no one uses temporary registers beyond T3
+    s << "\t"; emit_load_imm("$v0", 1, s); // syscall 1 is print integer
+    s << "\t"; emit_syscall(s);
+    //newline
+    if (newline) {
+      s << "\t"; emit_load_imm(ACC, 10, s); // 10 is ascii for newline
+      s << "\t"; emit_load_imm("$v0", 11, s); // syscall 4 is print string, but 11 is print char
+      s << "\t"; emit_syscall(s);
+    }
+    s << "\t"; emit_move(ACC, "$t7", s); // restore ACC's original value
+    s << "\t# end code to inspect register " << reg << endl;
+  }
+}
+
+static void emit_inspect_register(char *reg,  ostream& s) {
+  emit_inspect_register(reg, true, s);
+}
+
+static void emit_inspect_mem(int offset, char *reg,  ostream& s) {
+  if (cgen_debug) { // cgen_debug because unlike just comments, this adds to the program output
+    std::ostringstream dbg;
+    dbg << "memory at offset " << offset << " from reg and location -- "; 
+    emit_characterwise_string_printer(dbg.str(), s);
+    emit_inspect_register(reg, false, s);
+    emit_characterwise_string_printer(" -> ", s);
+    s << "\t# begin code to inspect register " << reg << endl;
+    s << "\t"; emit_move("$t7", ACC, s); // hoping no one uses temporary registers beyond T3. Use it to hold ACC's original value
+    s << "\t"; emit_load(ACC, offset, reg, s); // hoping no one uses temporary registers beyond T3
     s << "\t"; emit_load_imm("$v0", 1, s); // syscall 1 is print integer
     s << "\t"; emit_syscall(s);
     //newline
@@ -414,7 +441,6 @@ static void emit_inspect_register(char *reg,  ostream& s) {
     s << "\t# end code to inspect register " << reg << endl;
   }
 }
-
 // STACK MANAGEMENT, used for initializers
 void emit_stack_entry_bookkeeping(ostream& s) {
   // based on how coolc manages stack
@@ -1385,10 +1411,18 @@ CgenNode::CgenNode(Class_ nd, Basicness bstatus, CgenClassTableP ct) :
 
 int CgenNode::allocate_local(Symbol name) {
   int *offset = new int;
-  *offset =  -(ARGS_OFFSET + current_method->formals->len() + locals++);
+  *offset =  ARGS_OFFSET  + -(current_method->formals->len() + locals++);
   symbol_table->addid(name, offset); // FIXME possible off-by-one error
   return *offset;
 }
+
+int CgenNode::allocate_param(Symbol name, int pos) {
+  int *offset = new int;
+  *offset =  ARGS_OFFSET + -pos;
+  symbol_table->addid(name, offset);
+  return *offset;
+}
+
 
 
 //******************************************************************
@@ -1406,13 +1440,16 @@ void object_class::code(CgenNodeP node, ostream &s) {
 
   if (name == self) {
     emit_move(ACC, SELF, s);
+    if (cgen_debug) cout << endl;
   } else {
     if(node->symbol_table->lookup(name)) { 
       int *offset = node->symbol_table->probe(name); // offset from FP is directly stored in the symbol table, so we don't need to do any more manipulations
       if (cgen_debug) cout << ". it's a local variable at " << *offset << endl;
+      s << "# looking up local variable " << name << " at $fp + " << *offset << endl;
       emit_load(ACC, *offset, FP, s); 
     } else {
       int offset = node->get_attribute_offset(name);  // we'll load it from SELF + get_attribute_offset
+      s << "# looking up self field " << name << " at $s0 + " << offset << endl;
       if (cgen_debug) cout << ". it's a self attribute at " << offset << endl;
       emit_load(ACC, offset, SELF, s);
     }
@@ -1457,10 +1494,19 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
 
   // copy all the arguments
   for (int i = 0; i < arglen; i++) {
-    Formal f = m->formals->nth(i);
+    formal_class *f = dynamic_cast<formal_class*>(m->formals->nth(i));
     emit_load(ACC, i + 1, FP, s); // at 0 we have retrun pointer, but at +1 (below the FP) we are provided with the first argument, at +2 the second and so on. 
+    //TODO: is any temporary live? I think not
     s << JAL; emit_method_ref(Object, copy, s); s << endl; // copy the argument and store then push the copied arg on the stack
+    int offset = node->allocate_param(f->name, i); // allocate sequentially
     emit_push(ACC, s);
+    if (mdebug) {
+        std::ostringstream dbg;
+      dbg << "copying passed argument " << i << endl;
+      emit_characterwise_string_printer(dbg.str() , s);
+      emit_characterwise_string_printer("\t from:", s); emit_inspect_mem(i + 1, FP, s);
+      emit_characterwise_string_printer("\t to  :", s); emit_inspect_mem(offset, FP, s);
+    }
   }
 
   // all copied args will be stored in $fp + ARGS_OFFSET + i
@@ -1501,14 +1547,32 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
 }
 
 void assign_class::code(CgenNodeP node, ostream &s) {
+  int mdebug = 1;
+
+  if (mdebug) {
+    std::ostringstream dbg;
+    dbg << "assigning to " << name << ", ";
+    emit_characterwise_string_printer(dbg.str() , s);
+  }
+
   // TODO call GC at the end of every assignment
   s << "# assign class begin" << endl;
   expr->code(node, s); // rhs is evaluated and resulting value will be in ACC
   if(node->symbol_table->lookup(name)) {
     int *offset = node->symbol_table->probe(name);
+    if (mdebug) {
+      std::ostringstream dbg;
+      dbg << "which is a local at offset  " << *offset << endl;
+      emit_characterwise_string_printer(dbg.str() , s);
+    }
     emit_store(ACC, *offset, FP, s); // store it in its stack position;
   } else {
     int offset = node->get_attribute_offset(name);  // we'll store it in SELF + get_attribute_offset
+    if (mdebug) {
+      std::ostringstream dbg;
+      dbg << "which is a field at offset  " << offset << endl;
+      emit_characterwise_string_printer(dbg.str() , s);
+    }
     emit_store(ACC, offset, SELF, s); // store init in the object offset
   }
   s << "# assign class end" << endl;
@@ -1594,13 +1658,22 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
 
   // step 2
   emit_push(ACC, s);   
-  emit_move(S1, ACC, s); // store it in S1 since args will overwrite "ACC". TODO this will break if the expression itself is a function call. Either I implement callee-saves or I store expr as a temporary local and get an offset to it from FP.
+  emit_move(S1, ACC, s); // store it in S1 since args will overwrite "ACC", but we need it for dispatable. TODO this will break if the expression itself is a function call. Either I implement callee-saves or I store expr as a temporary local and get an offset to it from FP.
   
   // step 3
   for (int i = actual->len() - 1; i >= 0 ; i--) {
     Expression arg = actual->nth(i);
     arg->code(node, s);
     emit_push(ACC, s);
+    if(mdebug) {
+      std::ostringstream dbg;
+      dbg << "\tsetting up arguments for dispatch. arg " << i << ": \n";
+      emit_characterwise_string_printer(dbg.str() , s);
+      emit_characterwise_string_printer("\t", s); emit_inspect_register(FP, s);
+      emit_characterwise_string_printer("\t", s); emit_inspect_register(SP, s);
+      emit_characterwise_string_printer("\t value:", s); emit_inspect_mem(3, ACC, s);
+      if (i == 0) emit_characterwise_string_printer("\n", s);
+    }
 
     if (i == 1) { // one of builtins takes second arg in $a1
       emit_move(A1, ACC, s);
@@ -1614,20 +1687,20 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   // step 1 and 4
   int offset = node->probes(type)->get_method_offset(name);
   if (cgen_debug) cout << "Offset I'm reading is " << offset << endl;
-  emit_partial_load_address(T1, s); emit_method_ref(IO, out_string, s); s << endl;
-  emit_partial_load_address(T3, s); emit_method_ref(IO, out_int, s);    s << endl;
 
   emit_load(T1, DISPTABLE_OFFSET, S1, s); // T1 should contain same thing as Base_dispTab
   emit_load(T2, offset, T1, s);
   
 
+  emit_partial_load_address(T1, s); emit_method_ref(IO, out_string, s); s << endl;
+  emit_partial_load_address(T3, s); emit_method_ref(IO, out_int, s);    s << endl;
   int before_arg_dup_label = LABEL_SEQ++; // we'll duplicate args when calling builtin out_string or out_int functions, since they pop the stack
   int after_arg_dup_label = LABEL_SEQ++; 
   int after_test_arg_dup_label = LABEL_SEQ++;
   emit_branch(after_arg_dup_label, s);
   emit_label_def(before_arg_dup_label, s);
+  emit_characterwise_string_printer("-------> " , s);
   emit_push(ACC, s); // ACC has the last inspected argument
-  emit_characterwise_string_printer("----> we're here" , s);
   emit_branch(after_test_arg_dup_label, s);
   emit_label_def(after_arg_dup_label, s);
   emit_beq(T2, T1, before_arg_dup_label, s);
@@ -1763,8 +1836,21 @@ void block_class::code(CgenNodeP node, ostream &s) {
 }
 
 void let_class::code(CgenNodeP node, ostream &s) {
+  int mdebug = 1;
   s << "# let class begin" << endl;
+
+  if(mdebug) {
+    std::ostringstream dbg;
+    dbg << "entered let statement with symbol " << identifier << " of type " << type_decl << endl;
+    emit_characterwise_string_printer(dbg.str() , s);
+  }
+
+  if(mdebug) emit_inspect_register(ACC, s);
+
   init->code(node, s); // TODO what happens when let doesn't have an init?
+
+  if(mdebug) emit_inspect_register(ACC, s);
+
   node->symbol_table->enterscope();
 
   // allocate space on stack for this identifier
@@ -1773,6 +1859,17 @@ void let_class::code(CgenNodeP node, ostream &s) {
   int *offset = new int;
   *offset =  ARGS_OFFSET + -(node->current_method->formals->len() + node->locals++);
   if (cgen_debug) cout << "Arg offset for let is calculated to be " << *offset << " and locals are " << node->locals << endl;
+
+  if(mdebug) {
+    std::ostringstream dbg;
+    dbg << "Allocated position  in stack at $fp + " << *offset << endl;
+    emit_characterwise_string_printer(dbg.str() , s);
+    emit_inspect_register(FP, s);
+    emit_inspect_register(ACC, s);
+    emit_load(T1, *offset, FP, s);
+    emit_inspect_register(T1, s);
+  }
+
   node->symbol_table->addid(identifier, offset); // FIXME possible off-by-one error
   body->code(node, s); // return of the body is return of this, stays in $a0
   node->symbol_table->exitscope();
