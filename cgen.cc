@@ -1436,6 +1436,8 @@ int CgenNode::allocate_param(Symbol name, int pos) {
 //*****************************************************************
 
 void object_class::code(CgenNodeP node, ostream &s) {
+  int mdebug = 1;
+
   if (cgen_debug) cout << "looking up symbol " << name;
 
   if (name == self) {
@@ -1495,12 +1497,13 @@ void method_code(CgenNodeP node, method_class *m, ostream &s) {
   // copy all the arguments
   for (int i = 0; i < arglen; i++) {
     formal_class *f = dynamic_cast<formal_class*>(m->formals->nth(i));
-    emit_load(ACC, i + 1, FP, s); // at 0 we have retrun pointer, but at +1 (below the FP) we are provided with the first argument, at +2 the second and so on. 
+    // at 0 we have retrun pointer, but at +1 (below the FP) we are provided with the last argument, at +2 the second last and so on.
+    emit_load(ACC, arglen - i, FP, s); // arglen - i goes from arglen (first arg) to 1 (last arg)
     //TODO: is any temporary live? I think not
     s << JAL; emit_method_ref(Object, copy, s); s << endl; // copy the argument and store then push the copied arg on the stack
     int offset = node->allocate_param(f->name, i); // allocate sequentially
     emit_push(ACC, s);
-    if (mdebug) {
+    if (false && mdebug) {
         std::ostringstream dbg;
       dbg << "copying passed argument " << i << endl;
       emit_characterwise_string_printer(dbg.str() , s);
@@ -1560,20 +1563,22 @@ void assign_class::code(CgenNodeP node, ostream &s) {
   expr->code(node, s); // rhs is evaluated and resulting value will be in ACC
   if(node->symbol_table->lookup(name)) {
     int *offset = node->symbol_table->probe(name);
+    emit_store(ACC, *offset, FP, s); // store it in its stack position;
     if (mdebug) {
       std::ostringstream dbg;
       dbg << "which is a local at offset  " << *offset << endl;
       emit_characterwise_string_printer(dbg.str() , s);
+      emit_load("$t6", *offset, FP, s);
+      emit_inspect_mem(3, "$t6", s);
     }
-    emit_store(ACC, *offset, FP, s); // store it in its stack position;
   } else {
     int offset = node->get_attribute_offset(name);  // we'll store it in SELF + get_attribute_offset
+    emit_store(ACC, offset, SELF, s); // store init in the object offset
     if (mdebug) {
       std::ostringstream dbg;
       dbg << "which is a field at offset  " << offset << endl;
       emit_characterwise_string_printer(dbg.str() , s);
     }
-    emit_store(ACC, offset, SELF, s); // store init in the object offset
   }
   s << "# assign class end" << endl;
 }
@@ -1610,7 +1615,7 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
   emit_push(ACC, s);   
   
   // step 3
-  for (int i = actual->len() - 1; i >= 0 ; i--) {
+  for (int i = 0; i < actual->len() ; i++) { // evaluate arguments in order
     Expression arg = actual->nth(i);
     arg->code(node, s);
     emit_push(ACC, s);
@@ -1650,6 +1655,7 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
     dbg << "going to emit a dispatch (static type) " << type << ":" << name << "(" << actual->len() << ")" << endl;
     emit_characterwise_string_printer(dbg.str() , s);
     emit_inspect_register(SP, s);
+    emit_inspect_register(FP, s);
     emit_inspect_register(SELF, s);
   }
 
@@ -1661,11 +1667,12 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
   emit_move(S1, ACC, s); // store it in S1 since args will overwrite "ACC", but we need it for dispatable. TODO this will break if the expression itself is a function call. Either I implement callee-saves or I store expr as a temporary local and get an offset to it from FP.
   
   // step 3
-  for (int i = actual->len() - 1; i >= 0 ; i--) {
+  for (int i = 0; i < actual->len() ; i++) {
     Expression arg = actual->nth(i);
     arg->code(node, s);
     emit_push(ACC, s);
-    if(mdebug) {
+
+    if(false && mdebug) {
       std::ostringstream dbg;
       dbg << "\tsetting up arguments for dispatch. arg " << i << ": \n";
       emit_characterwise_string_printer(dbg.str() , s);
@@ -1728,6 +1735,7 @@ void dispatch_class::code(CgenNodeP node, ostream &s) {
     dbg << "exiting dispatch (static type) " << type << ":" << name << "(" << actual->len() << ")" << endl;
     emit_characterwise_string_printer(dbg.str() , s);
     emit_inspect_register(SP, s);
+    emit_inspect_register(FP, s);
     emit_inspect_register(SELF, s);
   }
   //emit_load_imm(S1, 0, s); // gobble the value of S1 so caller of the function we're in doesn't mistake it for out_string. TODO I'd implement a callee saving mechanism but too much work since S1 appears only in this corner case.
