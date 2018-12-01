@@ -441,24 +441,6 @@ static void emit_inspect_mem(int offset, char *reg,  ostream& s) {
     s << "\t# end code to inspect register " << reg << endl;
   }
 }
-// STACK MANAGEMENT, used for initializers
-void emit_stack_entry_bookkeeping(ostream& s) {
-  // based on how coolc manages stack
-  emit_addiu(SP, SP, -12, s);
-  emit_store(FP, 3, SP, s);
-  emit_store(SELF, 2, SP, s);
-  emit_store(RA, 1, SP, s);
-  emit_addiu(FP, SP, 4, s); // frame is now pointing to where we stored the FP on stack
-  //TODO use a calling convention. That would add more bookeeping I suppose
-}
-
-void emit_stack_exit_bookkeeping(ostream& s) {
-  emit_load(FP, 3, SP, s);
-  emit_load(SELF, 2, SP, s);
-  emit_load(RA, 1, SP, s);
-  emit_addiu(SP, SP, 12, s);
-  emit_return(s);
-}
 
 ///////////////////////////////////////////////////////////////////////////////
 //
@@ -1007,6 +989,7 @@ void CgenClassTable::initializers_code() {
 
   // Bool_init start
   emit_init_ref(Bool, str); str << LABEL;
+  emit_store(ZERO, DEFAULT_OBJFIELDS, ACC, str); 
   emit_return(str);
 
   // String_init start
@@ -1014,19 +997,27 @@ void CgenClassTable::initializers_code() {
   emit_return(str);
 
   // IO_init start
-  emit_init_ref(IO, str); str << LABEL; // we get the object in $a0 or ACC. Assuming that it may have garbage values and wasn't 0'd out.
-  emit_return(str);
+  //emit_init_ref(IO, str); str << LABEL; // we get the object in $a0 or ACC. Assuming that it may have garbage values and wasn't 0'd out.
+  //emit_return(str);
 
   // for any other classes
   for(List<CgenNode> *l = nds; l; l = l->tl()) {
 	CgenNodeP node = l->hd();
 
-	if (node->name == Object || node->name == Int || node->name == Bool || node->name == Str || node->name == IO) continue; // TODO optimize
+	if (node->name == Object || node->name == Int || node->name == Bool || node->name == Str) continue; // TODO optimize
 
 	emit_init_ref(node->name, str); str << LABEL;
-	emit_stack_entry_bookkeeping(str);
+
+    str << "# preparing init frame" << endl;
+	emit_move(SELF, ACC, str); // destination, source.
+    emit_push(RA, str); // first on frame pointer - return address
+    emit_push(SELF, str); // second on the frame pointer - self object
+    emit_push(FP, str); // lastly, old fp becomes control link
+    emit_addiu(FP, SP, +12, str); // now FP points to this method's frame
+    str << "# prepared init frame" << endl;
+
 	// init's calling convention: object being initialized will always be passed in $a0
-	emit_move(SELF, ACC, str); // destination, source. TODO why is this needed? because the initialization code may need to refer to self?
+    // call parent's init method
 	str << JAL; emit_init_ref(node->parent, str); str << endl;
 
     Features features = node->features;
@@ -1035,15 +1026,32 @@ void CgenClassTable::initializers_code() {
       if(f->isattr()) {
         attr_class *attr = dynamic_cast<attr_class*>(f);
         int offset = node->get_attribute_offset(attr->name);
-        if(attr->init) { // it will never be null I guess, at most no expr which already produces nothing
+        if(!attr->init->is_no_expr()) { 
+          if (cgen_debug) cout << "non default init " << endl;
           attr->init->code(node, str);
           emit_store(ACC, offset, SELF, str);
+        } else if(attr->type_decl == Int || attr->type_decl == Str || attr->type_decl == Bool) { // we have default initializations for these, see 5.1
+          if (cgen_debug) cout << "default init of primitive types" << endl;
+          // NOTE: KEEP IN SYNC WITH new__class::code
+          str << LA << ACC << "\t"; emit_protobj_ref(attr->type_decl, str); str << endl;
+          str << JAL; emit_method_ref(Object, copy, str); str << endl; // result is in $a0
+          str << JAL; emit_init_ref(attr->type_decl, str); str << endl; // initialize the copied object
+        } else {
+          if (cgen_debug) cout << "default init (void)" << endl;
+          // store void for anything else unless initialized. Again, 5.1
+          emit_store(ZERO, offset, SELF, str);
         }
       }
     }
 
 	emit_move(ACC, SELF, str); // Q: why is this needed?? ACC usually contains "return value" which I don't think has significance here. Anyways, why are we modifying it? Ans. because we want to return "SELF" from new
-	emit_stack_exit_bookkeeping(str);
+
+    str << "# unwinding init frame" << endl;
+    emit_load(RA, RETURN_ADDRESS_OFFSET, FP, str); // reset return address to stored one 
+    emit_load(FP, CONTROL_LINK_OFFSET, FP, str); // reset $fp to control link
+    emit_shrink_stack(3, str); // destroy stored value of self object, and remove control link, and return address from stack
+    str << "# unwinded init frame" << endl;
+    emit_return(str); 
   }
 }
 
@@ -1201,7 +1209,7 @@ void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
                     << WORD << node->assigned_tag << endl
                     << WORD << 4 << endl
                     << WORD ; emit_disptable_ref(s, str); str << endl;
-                str << WORD ; emit_protobj_ref(s, str); str << endl;
+                str << WORD << 0 << endl;
             }
             else if(s == Bool)
             {
@@ -1209,7 +1217,7 @@ void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
                     << WORD << node->assigned_tag << endl
                     << WORD << 4 << endl
                     << WORD ; emit_disptable_ref(s, str); str << endl;
-                str << WORD ; emit_protobj_ref(s, str); str << endl;
+                str << WORD << 0 << endl;
             }
             else if(s == Str)
             {
@@ -1218,7 +1226,7 @@ void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
                     << WORD << 5 << endl
                     << WORD ; emit_disptable_ref(s, str); str << endl;
                 str << WORD ; emit_protobj_ref(Int, str); str << endl;
-                str << WORD ; emit_protobj_ref(Str, str); str << endl;
+                str << WORD << 0 << endl;
             }
         }
     }
@@ -2049,9 +2057,8 @@ void bool_const_class::code(CgenNodeP node, ostream& s)
 void new__class::code(CgenNodeP node, ostream &s) {
   s << "# new class begin" << endl;
   s << LA << ACC << "\t"; emit_protobj_ref(type_name, s); s << endl;
-  s << JAL;
-  emit_method_ref(Object, idtable.lookup_string("copy"), s);
-  s << endl; // result is in $a0
+  s << JAL; emit_method_ref(Object, idtable.lookup_string("copy"), s); s << endl; // result is in $a0
+  s << JAL; emit_init_ref(type_name, s); // initialize the copied object
   s << "# new class end" << endl;
 }
 
