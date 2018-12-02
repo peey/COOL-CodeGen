@@ -43,4 +43,5 @@ default_str.cl (no output)
 	All Rights Reserved.
 	See the file README for a full copyright notice.
 	Loaded: ../lib/trap.handler
+	cool
 	COOL program successfully executed

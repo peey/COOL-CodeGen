@@ -1034,7 +1034,7 @@ void CgenClassTable::initializers_code() {
 	emit_init_ref(node->name, str); str << LABEL;
 
     str << "# preparing init frame" << endl;
-	emit_move(SELF, ACC, str); // destination, source.
+  	emit_move(SELF, ACC, str); // destination, source.
     emit_push(RA, str); // first on frame pointer - return address
     emit_push(SELF, str); // second on the frame pointer - self object
     emit_push(FP, str); // lastly, old fp becomes control link
@@ -1901,7 +1901,11 @@ void let_class::code(CgenNodeP node, ostream &s) {
 
   if(mdebug) emit_inspect_register(ACC, s);
 
-  init->code(node, s); // TODO what happens when let doesn't have an init?
+  if (init->is_no_expr()) {
+    emit_partial_load_address(ACC, s); emit_protobj_ref(type_decl, s); s << endl;
+  } else {
+    init->code(node, s); // TODO what happens when let doesn't have an init?
+  }
 
   if(mdebug) emit_inspect_register(ACC, s);
 
