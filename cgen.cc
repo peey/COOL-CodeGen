@@ -1641,9 +1641,10 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
 
   // step 2
   emit_push(ACC, s);
+  emit_move(S1, ACC, s); // store it in S1 since args will overwrite "ACC", but we need it for dispatable. TODO this will break if the expression itself is a function call. Either I implement callee-saves or I store expr as a temporary local and get an offset to it from FP.
 
   // step 3
-  for (int i = 0; i < actual->len() ; i++) { // evaluate arguments in order
+  for (int i = 0; i < actual->len() ; i++) {
     Expression arg = actual->nth(i);
     arg->code(node, s);
     emit_push(ACC, s);
@@ -1653,17 +1654,34 @@ void static_dispatch_class::code(CgenNodeP node, ostream &s) {
     }
   }
 
-  emit_inspect_register(SP, s);
+  // step 3.5 check if type's tag matches that of T
+  int test_abortb = LABEL_SEQ++;
+  int test_passb = LABEL_SEQ++;
+  int test_startb = LABEL_SEQ++;
+
+  emit_branch(test_startb, s);
+  
+  emit_label_def(test_abortb, s);
+    emit_load_imm(T1, 1, s); // line number
+    emit_load_address(T1, "String_protObj", s); // file name
+    s << JAL << "_dispatch_abort" << endl; // assuming this will exit it
+
+  emit_label_def(test_startb, s);
+    emit_load_imm(T1, node->class_table->probe(type_name)->assigned_tag, s); // load assigned tag of the static class in T1
+    emit_load(T2, 0, S1, s); // load class tag into T2
+    emit_bne(T1, T2, test_abortb, s); // if they don't match
+      // naturally goes to test_passb if we don't jump
+
   // step 4
-  s << JAL; emit_method_ref(type_name, name, s); s << endl;
+  emit_label_def(test_passb, s);
+    s << JAL; emit_method_ref(type_name, name, s); s << endl;
+
 
   emit_load(SELF, SELF_OBJECT_OFFSET, FP, s); // step 5
-  //emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s);
+  emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s); // step 5
 
-  // step 6
   emit_shrink_stack(actual->len() + 1, s); // step 6
 
-  emit_inspect_register(SP, s);
   s << "# static dispatch class end" << endl;
 }
 
