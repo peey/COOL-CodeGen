@@ -1903,6 +1903,12 @@ void let_class::code(CgenNodeP node, ostream &s) {
 
   if (init->is_no_expr()) {
     emit_partial_load_address(ACC, s); emit_protobj_ref(type_decl, s); s << endl;
+
+    // also run init
+    s << JAL; emit_init_ref(type_decl, s); s << endl;
+    emit_load(SELF, SELF_OBJECT_OFFSET, FP, s); // step 5
+    emit_load(RA, RETURN_ADDRESS_OFFSET, FP, s); // step 5
+
   } else {
     init->code(node, s); // TODO what happens when let doesn't have an init?
   }
