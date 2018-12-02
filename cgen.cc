@@ -500,6 +500,29 @@ void StringEntry::code_def(ostream& s, int stringclasstag)
   s << ALIGN;                                                 // align to word
 }
 
+void modified_string_protobj(ostream& s, int stringclasstag, int len, char* str)
+{
+  IntEntryP lensym = inttable.add_int(len);
+
+  // Add -1 eye catcher
+  s << WORD << "-1" << endl;
+
+  s << "String_protObj";  s  << LABEL                                             // label is ":\n" in emit.h
+      << WORD << stringclasstag << endl                                 // tag
+      << WORD << (DEFAULT_OBJFIELDS + STRING_SLOTS + (len+4)/4) << endl // size
+      << WORD;
+
+
+ /***** Add dispatch information for class String ******/
+      emit_disptable_ref(Str, s);
+
+      s << endl;                                              // dispatch table
+      s << WORD;  lensym->code_ref(s);  s << endl;            // string length
+  emit_string_constant(s, str);                                // ascii string
+  s << ALIGN;                                                 // align to word
+}
+
+
 //
 // StrTable::code_string
 // Generate a string object definition for every string constant in the
@@ -705,6 +728,7 @@ void CgenClassTable::code_constants()
   inttable.add_string("0");
 
   stringtable.code_string_table(str,stringclasstag);
+  modified_string_protobj(str, stringclasstag, 5, "cool\n"); // call this here so that added intconst will also get emitted
   inttable.code_string_table(str,intclasstag);
   code_bools(boolclasstag);
 }
@@ -1222,12 +1246,7 @@ void CgenClassTable::rec_protObj(CgenNodeP node, ostream& str)
             }
             else if(s == Str)
             {
-                emit_protobj_ref(s, str); str << LABEL
-                    << WORD << node->assigned_tag << endl
-                    << WORD << 5 << endl
-                    << WORD ; emit_disptable_ref(s, str); str << endl;
-                str << WORD ; emit_protobj_ref(Int, str); str << endl;
-                str << WORD << 0 << endl;
+              // we've already emited the protobj
             }
         }
     }
