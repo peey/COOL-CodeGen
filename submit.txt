@@ -37,7 +37,7 @@ good3.cl
 	Loaded: ../lib/trap.handler
 	:268502268: Dispatch to void.
 
-default_str.cl (no output)
+default_str.cl
 	SPIM Version 6.5 of January 4, 2003
 	Copyright 1990-2003 by James R. Larus (larus@cs.wisc.edu).
 	All Rights Reserved.
